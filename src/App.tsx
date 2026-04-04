@@ -1,40 +1,145 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
+import { openRepo, getRepoStatus, getFileDiff } from "./lib/tauri";
+import type { RepoStatus } from "./lib/tauri";
 import "./App.css";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [workdir, setWorkdir] = useState<string | null>(null);
+  const [status, setStatus] = useState<RepoStatus | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [diff, setDiff] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function greet() {
-    setGreetMsg(await invoke("greet", { name }));
+  // Open the repo that contains the Tauri process working directory
+  useEffect(() => {
+    openRepo(".")
+      .then((dir) => {
+        setWorkdir(dir);
+        return getRepoStatus();
+      })
+      .then(setStatus)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  // Fetch diff when a file is selected
+  useEffect(() => {
+    if (!selectedFile) {
+      setDiff(null);
+      return;
+    }
+    getFileDiff(selectedFile)
+      .then(setDiff)
+      .catch((e) => setDiff(`Error: ${e}`));
+  }, [selectedFile]);
+
+  if (error) {
+    return (
+      <main className="p-4">
+        <p className="text-destructive">{error}</p>
+      </main>
+    );
   }
 
-  return (
-    <main className="flex flex-col items-center justify-center pt-[10vh] text-center">
-      <h1 className="text-2xl font-bold">Welcome to Tauri + React</h1>
+  if (!status) {
+    return (
+      <main className="flex h-screen items-center justify-center">
+        <p className="text-muted-foreground">Loading…</p>
+      </main>
+    );
+  }
 
-      <form
-        className="flex gap-2 mt-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+  const hasChanges =
+    status.staged.length > 0 ||
+    status.unstaged.length > 0 ||
+    status.untracked.length > 0;
+
+  return (
+    <main className="flex h-screen text-sm">
+      {/* File tree */}
+      <aside className="w-64 shrink-0 overflow-y-auto border-r border-border p-3">
+        <h2 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {workdir ?? "Repository"}
+        </h2>
+
+        {!hasChanges && (
+          <p className="mt-4 text-muted-foreground">No changes</p>
+        )}
+
+        <FileGroup
+          label="Staged"
+          files={status.staged.map((f) => f.path)}
+          selected={selectedFile}
+          onSelect={setSelectedFile}
         />
-        <button
-          type="submit"
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 active:bg-blue-800"
-        >
-          Greet
-        </button>
-      </form>
-      <p className="mt-4 text-gray-700 dark:text-gray-300">{greetMsg}</p>
+        <FileGroup
+          label="Changed"
+          files={status.unstaged.map((f) => f.path)}
+          selected={selectedFile}
+          onSelect={setSelectedFile}
+        />
+        <FileGroup
+          label="Untracked"
+          files={status.untracked}
+          selected={selectedFile}
+          onSelect={setSelectedFile}
+        />
+      </aside>
+
+      {/* Diff panel */}
+      <section className="flex-1 overflow-auto p-4">
+        {selectedFile ? (
+          <>
+            <h3 className="mb-2 font-mono text-xs text-muted-foreground">
+              {selectedFile}
+            </h3>
+            <pre className="whitespace-pre-wrap rounded-lg border border-border bg-card p-4 font-mono text-xs leading-relaxed">
+              {diff ?? "Loading diff…"}
+            </pre>
+          </>
+        ) : (
+          <p className="mt-20 text-center text-muted-foreground">
+            Select a file to view its diff
+          </p>
+        )}
+      </section>
     </main>
+  );
+}
+
+function FileGroup({
+  label,
+  files,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  files: string[];
+  selected: string | null;
+  onSelect: (path: string) => void;
+}) {
+  if (files.length === 0) return null;
+
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
+      <ul>
+        {files.map((path) => (
+          <li key={path}>
+            <button
+              type="button"
+              onClick={() => onSelect(path)}
+              className={`w-full truncate rounded px-2 py-0.5 text-left font-mono text-xs ${
+                selected === path
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-muted"
+              }`}
+            >
+              {path}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
