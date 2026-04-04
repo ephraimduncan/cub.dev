@@ -1,0 +1,73 @@
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { FileList } from "./file-list";
+import { CommitBar } from "./commit-bar";
+import type { FileEntry } from "@/lib/tauri";
+
+interface SidebarProps {
+  workdir: string | null;
+  staged: FileEntry[];
+  unstaged: FileEntry[];
+  stagedPaths: Set<string>;
+  selectedFile: string | null;
+  onSelectFile: (path: string) => void;
+  onToggleStage: (path: string) => void;
+  onStageAll: () => void;
+  onCommit: (message: string) => void;
+  onCommitAndPush: (message: string) => void;
+}
+
+export function Sidebar({
+  workdir,
+  staged,
+  unstaged,
+  stagedPaths,
+  selectedFile,
+  onSelectFile,
+  onToggleStage,
+  onStageAll,
+  onCommit,
+  onCommitAndPush,
+}: SidebarProps) {
+  const hasChanges = staged.length > 0 || unstaged.length > 0;
+
+  return (
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <h2 className="truncate text-xs font-medium text-muted-foreground">
+          {workdir ?? "Repository"}
+        </h2>
+      </div>
+      <ScrollArea className="flex-1">
+        <div className="p-1.5">
+          {!hasChanges && (
+            <p className="px-2 py-4 text-xs text-muted-foreground">
+              No changes
+            </p>
+          )}
+          <FileList
+            label="Staged"
+            files={staged}
+            stagedPaths={stagedPaths}
+            selectedFile={selectedFile}
+            onSelectFile={onSelectFile}
+            onToggleStage={onToggleStage}
+          />
+          <FileList
+            label="Unstaged"
+            files={unstaged}
+            stagedPaths={stagedPaths}
+            selectedFile={selectedFile}
+            onSelectFile={onSelectFile}
+            onToggleStage={onToggleStage}
+            onStageAll={onStageAll}
+          />
+        </div>
+      </ScrollArea>
+      <CommitBar
+        stagedCount={staged.length}
+        onCommit={onCommit}
+        onCommitAndPush={onCommitAndPush}
+      />
+    </div>
+  );
+}

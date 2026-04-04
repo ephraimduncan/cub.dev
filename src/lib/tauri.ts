@@ -1,7 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 
-// Mirrors src-tauri/src/git.rs types
-
 export type ChangeKind =
   | "added"
   | "modified"
@@ -12,6 +10,8 @@ export type ChangeKind =
 export interface FileEntry {
   path: string;
   kind: ChangeKind;
+  additions: number;
+  deletions: number;
 }
 
 export interface RepoStatus {
@@ -30,4 +30,16 @@ export function getRepoStatus(): Promise<RepoStatus> {
 
 export function getFileDiff(path: string): Promise<string> {
   return invoke<string>("get_file_diff", { path });
+}
+
+export function stageFile(path: string): Promise<void> {
+  return invoke<void>("stage_file", { path });
+}
+
+export function unstageFile(path: string): Promise<void> {
+  return invoke<void>("unstage_file", { path });
+}
+
+export function commit(message: string): Promise<string> {
+  return invoke<string>("commit", { message });
 }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 
 use git2::{DiffFormat, DiffOptions, Repository, StatusOptions};
@@ -22,6 +24,8 @@ pub enum ChangeKind {
 pub struct FileEntry {
     pub path: String,
     pub kind: ChangeKind,
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Serialize)]
@@ -48,7 +52,32 @@ pub fn open_repo(path: String, state: State<AppState>) -> Result<String, String>
     Ok(workdir)
 }
 
-/// List changed files grouped by status: staged, unstaged, untracked.
+fn count_diff_lines(
+    diff: &git2::Diff,
+) -> Result<HashMap<String, (u32, u32)>, String> {
+    let mut counts: HashMap<String, (u32, u32)> = HashMap::new();
+
+    diff.foreach(
+        &mut |_delta, _progress| true,
+        None,
+        None,
+        Some(&mut |delta, _hunk, line| {
+            if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
+                let entry = counts.entry(path.to_string()).or_insert((0, 0));
+                match line.origin() {
+                    '+' => entry.0 += 1,
+                    '-' => entry.1 += 1,
+                    _ => {}
+                }
+            }
+            true
+        }),
+    )
+    .map_err(|e| format!("failed to iterate diff: {e}"))?;
+
+    Ok(counts)
+}
+
 #[tauri::command]
 pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
     let lock = state
@@ -64,6 +93,21 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
         .statuses(Some(&mut opts))
         .map_err(|e| format!("failed to get status: {e}"))?;
 
+    let head_tree = repo
+        .revparse_single("HEAD^{tree}")
+        .ok()
+        .and_then(|obj| obj.into_tree().ok());
+
+    let staged_diff = repo
+        .diff_tree_to_index(head_tree.as_ref(), None, None)
+        .map_err(|e| format!("failed to diff staged: {e}"))?;
+    let staged_counts = count_diff_lines(&staged_diff)?;
+
+    let unstaged_diff = repo
+        .diff_index_to_workdir(None, None)
+        .map_err(|e| format!("failed to diff unstaged: {e}"))?;
+    let unstaged_counts = count_diff_lines(&unstaged_diff)?;
+
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
@@ -71,11 +115,10 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
     for entry in statuses.iter() {
         let path = match entry.path() {
             Some(p) => p.to_string(),
-            None => continue, // skip non-UTF-8 paths
+            None => continue,
         };
         let s = entry.status();
 
-        // Index (staged) changes
         if s.intersects(
             git2::Status::INDEX_NEW
                 | git2::Status::INDEX_MODIFIED
@@ -94,13 +137,18 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
             } else {
                 ChangeKind::Typechange
             };
+            let (additions, deletions) = staged_counts
+                .get(&path)
+                .copied()
+                .unwrap_or((0, 0));
             staged.push(FileEntry {
                 path: path.clone(),
                 kind,
+                additions,
+                deletions,
             });
         }
 
-        // Working tree (unstaged) changes — excludes WT_NEW which is "untracked"
         if s.intersects(
             git2::Status::WT_MODIFIED
                 | git2::Status::WT_DELETED
@@ -116,13 +164,18 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
             } else {
                 ChangeKind::Typechange
             };
+            let (additions, deletions) = unstaged_counts
+                .get(&path)
+                .copied()
+                .unwrap_or((0, 0));
             unstaged.push(FileEntry {
                 path: path.clone(),
                 kind,
+                additions,
+                deletions,
             });
         }
 
-        // Untracked (new in working tree, not staged)
         if s.contains(git2::Status::WT_NEW) {
             untracked.push(path);
         }
@@ -196,7 +249,6 @@ pub fn get_file_diff(path: String, state: State<AppState>) -> Result<String, Str
     Ok(output)
 }
 
-/// Build a standard "new file" patch string from raw file contents.
 fn format_new_file_patch(path: &str, contents: &str) -> String {
     let mut out = format!(
         "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
@@ -215,4 +267,98 @@ fn format_new_file_patch(path: &str, contents: &str) -> String {
         out.push_str("\\ No newline at end of file\n");
     }
     out
+}
+
+#[tauri::command]
+pub fn stage_file(path: String, state: State<AppState>) -> Result<(), String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("failed to get index: {e}"))?;
+
+    index
+        .add_path(Path::new(&path))
+        .map_err(|e| format!("failed to stage file: {e}"))?;
+
+    index
+        .write()
+        .map_err(|e| format!("failed to write index: {e}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unstage_file(path: String, state: State<AppState>) -> Result<(), String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+
+    match repo.revparse_single("HEAD") {
+        Ok(head_obj) => {
+            repo.reset_default(Some(&head_obj), [path.as_str()])
+                .map_err(|e| format!("failed to unstage file: {e}"))?;
+        }
+        Err(_) => {
+            // No HEAD yet (initial commit) — remove from index directly
+            let mut index = repo
+                .index()
+                .map_err(|e| format!("failed to get index: {e}"))?;
+            index
+                .remove_path(Path::new(&path))
+                .map_err(|e| format!("failed to unstage file: {e}"))?;
+            index
+                .write()
+                .map_err(|e| format!("failed to write index: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn commit(message: String, state: State<AppState>) -> Result<String, String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("failed to get index: {e}"))?;
+
+    let tree_oid = index
+        .write_tree()
+        .map_err(|e| format!("failed to write tree: {e}"))?;
+
+    let tree = repo
+        .find_tree(tree_oid)
+        .map_err(|e| format!("failed to find tree: {e}"))?;
+
+    let sig = repo
+        .signature()
+        .map_err(|e| format!("failed to get signature: {e}"))?;
+
+    let oid = match repo.head() {
+        Ok(head_ref) => {
+            let parent = head_ref
+                .peel_to_commit()
+                .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
+            repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
+                .map_err(|e| format!("failed to create commit: {e}"))?
+        }
+        Err(_) => {
+            repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
+                .map_err(|e| format!("failed to create initial commit: {e}"))?
+        }
+    };
+
+    Ok(oid.to_string())
 }
