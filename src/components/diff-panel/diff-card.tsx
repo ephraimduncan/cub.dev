@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useLayoutEffect,
+  useMemo,
   useState,
 } from "react";
 import type {
@@ -11,7 +12,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
+import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -35,9 +36,14 @@ const STATUS_COLORS: Record<string, string> = {
   typechange: "text-purple-500",
 };
 
-interface DiffCardProps {
+const DIFF_CODE_STYLE = {
+  "--diffs-font-family": "'App Mono', monospace",
+  "--diffs-font-size": "14px",
+  "--diffs-line-height": "20px",
+} as React.CSSProperties;
+
+interface DiffCardBaseProps {
   filePath: string;
-  fileDiff: FileDiffMetadata;
   additions: number;
   deletions: number;
   kind: ChangeKind;
@@ -72,11 +78,39 @@ interface DiffCardProps {
   onToggleStage: (path: string) => void;
 }
 
+type DiffCardProps = DiffCardBaseProps &
+  (
+    | {
+        contentKind: "text";
+        fileDiff: FileDiffMetadata;
+      }
+    | {
+        contentKind: "binary";
+        oldBinary: boolean;
+        newBinary: boolean;
+      }
+  );
+
+function getBinaryDiffMessage(
+  kind: ChangeKind,
+  oldBinary: boolean,
+  newBinary: boolean,
+): string {
+  if (kind === "added") return "Binary file added. Text diff unavailable.";
+  if (kind === "deleted") return "Binary file deleted. Text diff unavailable.";
+  if (!oldBinary && newBinary) {
+    return "File now contains binary data. Text diff unavailable.";
+  }
+  if (oldBinary && !newBinary) {
+    return "Previous version is binary. Text diff unavailable.";
+  }
+  return "Binary file changed. Text diff unavailable.";
+}
+
 export const DiffCard = memo(
   forwardRef<HTMLDivElement, DiffCardProps>(function DiffCard(
     {
       filePath,
-      fileDiff,
       additions,
       deletions,
       kind,
@@ -90,6 +124,7 @@ export const DiffCard = memo(
       onSubmitAnnotation,
       onDeleteAnnotation,
       onToggleStage,
+      ...contentProps
     },
     ref,
   ) {
@@ -183,19 +218,38 @@ export const DiffCard = memo(
       [filePath, onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
     );
 
-    const checkboxChecked =
-      stageState === "staged"
-        ? true
-        : stageState === "unstaged"
-          ? false
-          : "mixed";
+    const fileDiffOptions = useMemo(
+      () => ({
+        themeType: "system" as const,
+        diffStyle,
+        overflow: "wrap" as const,
+        lineDiffType: "word-alt" as const,
+        disableFileHeader: true,
+        expansionLineCount: 5,
+        hunkSeparators: "line-info" as const,
+        enableLineSelection: !hasOpenForm,
+        enableGutterUtility: !hasOpenForm,
+        onLineSelectionEnd: handleLineSelectionEnd,
+        onGutterUtilityClick: handleGutterClick,
+      }),
+      [diffStyle, handleGutterClick, handleLineSelectionEnd, hasOpenForm],
+    );
+
+    const binaryMessage =
+      contentProps.contentKind === "binary"
+        ? getBinaryDiffMessage(
+            kind,
+            contentProps.oldBinary,
+            contentProps.newBinary,
+          )
+        : null;
 
     return (
       <div ref={ref} className="min-w-0 w-full overflow-clip">
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full items-center gap-2 border-b bg-muted/30 px-3 py-3 cursor-pointer text-left"
+            className="flex w-full cursor-pointer items-center gap-2 border-b bg-muted/30 px-3 py-3 text-left"
           >
             <IconChevronDown
               className={cn(
@@ -204,8 +258,8 @@ export const DiffCard = memo(
               )}
             />
             <Checkbox
-              checked={checkboxChecked === "mixed" ? false : checkboxChecked}
-              indeterminate={checkboxChecked === "mixed"}
+              checked={stageState === "staged"}
+              indeterminate={stageState === "partial"}
               onClick={(e) => {
                 e.stopPropagation();
                 handleToggleStage();
@@ -239,32 +293,22 @@ export const DiffCard = memo(
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent keepMounted>
-            <FileDiff<CommentMetadata>
-              fileDiff={fileDiff}
-              className="min-w-0 overflow-hidden"
-              style={
-                {
-                  "--diffs-font-family": "'App Mono', monospace",
-                  "--diffs-font-size": "14px",
-                  "--diffs-line-height": "20px",
-                } as React.CSSProperties
-              }
-              options={{
-                themeType: "system",
-                diffStyle,
-                overflow: "wrap",
-                lineDiffType: "word-alt",
-                disableFileHeader: true,
-                enableLineSelection: !hasOpenForm,
-                enableGutterUtility: !hasOpenForm,
-                onLineSelectionEnd: handleLineSelectionEnd,
-                onGutterUtilityClick: handleGutterClick,
-              }}
-              lineAnnotations={annotations}
-              selectedLines={selectedLines}
-              renderAnnotation={renderAnnotation}
-              disableWorkerPool
-            />
+            {contentProps.contentKind === "text" ? (
+              <PierreFileDiff<CommentMetadata>
+                fileDiff={contentProps.fileDiff}
+                className="min-w-0 overflow-hidden"
+                style={DIFF_CODE_STYLE}
+                options={fileDiffOptions}
+                lineAnnotations={annotations}
+                selectedLines={selectedLines}
+                renderAnnotation={renderAnnotation}
+                disableWorkerPool
+              />
+            ) : (
+              <div className="px-4 py-6 text-sm text-muted-foreground">
+                <p>{binaryMessage}</p>
+              </div>
+            )}
           </CollapsibleContent>
         </Collapsible>
       </div>

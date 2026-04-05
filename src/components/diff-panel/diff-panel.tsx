@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { AnnotationSide, DiffLineAnnotation, FileDiffMetadata } from "@pierre/diffs";
-import { parsePatchFiles } from "@pierre/diffs";
+import type {
+  AnnotationSide,
+  DiffLineAnnotation,
+  FileDiffMetadata,
+} from "@pierre/diffs";
+import { parseDiffFromFile } from "@pierre/diffs";
 import { DiffToolbar } from "./diff-toolbar";
 import { DiffCard } from "./diff-card";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
+import type { FileDiffContents } from "@/hooks/use-diffs";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
 interface DiffPanelProps {
   files: FileEntry[];
-  diffs: Map<string, string>;
+  diffs: Map<string, FileDiffContents>;
   loading: boolean;
   stagedPaths: Set<string>;
   unstaged: FileEntry[];
@@ -62,13 +67,24 @@ function getStageState(
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
 
-interface ParsedFile {
-  filePath: string;
-  fileDiff: FileDiffMetadata;
-  additions: number;
-  deletions: number;
-  kind: ChangeKind;
-}
+type ParsedFile =
+  | {
+      contentKind: "text";
+      filePath: string;
+      fileDiff: FileDiffMetadata;
+      additions: number;
+      deletions: number;
+      kind: ChangeKind;
+    }
+  | {
+      contentKind: "binary";
+      filePath: string;
+      additions: number;
+      deletions: number;
+      kind: ChangeKind;
+      oldBinary: boolean;
+      newBinary: boolean;
+    };
 
 export function DiffPanel({
   files,
@@ -114,20 +130,35 @@ export function DiffPanel({
     onScrollComplete();
   }, [scrollToPath, onScrollComplete]);
 
-  // Pre-parse all patches once, producing FileDiffMetadata per file.
-  // parsePatchFiles returns ParsedPatch[] (one per commit). Each patch has a
-  // `files` array of FileDiffMetadata. We flatten into a lookup keyed by path.
+  // Parse full file contents into FileDiffMetadata with isPartial=false,
+  // enabling hunk expansion and custom hunk separators.
   const parsedFiles = useMemo(() => {
     const result: ParsedFile[] = [];
     for (const file of files) {
-      const patch = diffs.get(file.path);
-      if (!patch) continue;
-      const parsed = parsePatchFiles(patch, file.path);
-      // Each single-file patch produces one ParsedPatch with one file entry.
-      const fileDiff = parsed[0]?.files[0];
-      if (fileDiff) {
-        result.push({ filePath: file.path, fileDiff, additions: file.additions, deletions: file.deletions, kind: file.kind });
+      const contents = diffs.get(file.path);
+      if (!contents) continue;
+
+      if (contents.kind === "binary") {
+        result.push({
+          contentKind: "binary",
+          filePath: file.path,
+          additions: file.additions,
+          deletions: file.deletions,
+          kind: file.kind,
+          oldBinary: contents.oldBinary,
+          newBinary: contents.newBinary,
+        });
+        continue;
       }
+
+      result.push({
+        contentKind: "text",
+        filePath: file.path,
+        fileDiff: parseDiffFromFile(contents.oldFile, contents.newFile),
+        additions: file.additions,
+        deletions: file.deletions,
+        kind: file.kind,
+      });
     }
     return result;
   }, [files, diffs]);
@@ -150,34 +181,51 @@ export function DiffPanel({
         commentCount={totalCommentCount}
         onSubmitReview={onSubmitReview}
       />
-      <div className="flex-1 min-h-0 overflow-auto">
-          {parsedFiles.length === 0 ? (
-            <div className="flex h-full items-center justify-center py-20">
-              <p className="text-sm text-muted-foreground">No changes to review</p>
-            </div>
-          ) : (
-            parsedFiles.map(({ filePath, fileDiff, additions, deletions, kind }) => (
-              <DiffCard
-                key={filePath}
-                ref={setCardRef(filePath)}
-                filePath={filePath}
-                fileDiff={fileDiff}
-                additions={additions}
-                deletions={deletions}
-                kind={kind}
-                stageState={getStageState(filePath, stagedPaths, unstaged)}
-                diffStyle={diffStyle}
-                expanded={allExpanded}
-                annotations={annotationsByFile.get(filePath) ?? EMPTY_ANNOTATIONS}
-                hasOpenForm={hasOpenForm}
-                onAddAnnotation={onAddAnnotation}
-                onCancelAnnotation={onCancelAnnotation}
-                onSubmitAnnotation={onSubmitAnnotation}
-                onDeleteAnnotation={onDeleteAnnotation}
-                onToggleStage={onToggleStage}
-              />
-            ))
-          )}
+      <div className="min-h-0 flex-1 overflow-auto">
+        {parsedFiles.length === 0 ? (
+          <div className="flex h-full items-center justify-center py-20">
+            <p className="text-sm text-muted-foreground">
+              No changes to review
+            </p>
+          </div>
+        ) : (
+          parsedFiles.map((parsedFile) => (
+            <DiffCard
+              key={parsedFile.filePath}
+              ref={setCardRef(parsedFile.filePath)}
+              filePath={parsedFile.filePath}
+              additions={parsedFile.additions}
+              deletions={parsedFile.deletions}
+              kind={parsedFile.kind}
+              stageState={getStageState(
+                parsedFile.filePath,
+                stagedPaths,
+                unstaged,
+              )}
+              diffStyle={diffStyle}
+              expanded={allExpanded}
+              annotations={
+                annotationsByFile.get(parsedFile.filePath) ?? EMPTY_ANNOTATIONS
+              }
+              hasOpenForm={hasOpenForm}
+              onAddAnnotation={onAddAnnotation}
+              onCancelAnnotation={onCancelAnnotation}
+              onSubmitAnnotation={onSubmitAnnotation}
+              onDeleteAnnotation={onDeleteAnnotation}
+              onToggleStage={onToggleStage}
+              {...(parsedFile.contentKind === "text"
+                ? {
+                    contentKind: "text" as const,
+                    fileDiff: parsedFile.fileDiff,
+                  }
+                : {
+                    contentKind: "binary" as const,
+                    oldBinary: parsedFile.oldBinary,
+                    newBinary: parsedFile.newBinary,
+                  })}
+            />
+          ))
+        )}
       </div>
     </div>
   );

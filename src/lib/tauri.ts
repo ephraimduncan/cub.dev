@@ -28,8 +28,18 @@ export function getRepoStatus(): Promise<RepoStatus> {
   return invoke<RepoStatus>("get_repo_status");
 }
 
-export function getFileDiff(path: string): Promise<string> {
-  return invoke<string>("get_file_diff", { path });
+export interface FileContentsResponse {
+  name: string;
+  old_content: string | null;
+  old_binary: boolean;
+  new_content: string | null;
+  new_binary: boolean;
+}
+
+export function getFileContents(
+  path: string,
+): Promise<FileContentsResponse> {
+  return invoke<FileContentsResponse>("get_file_contents", { path });
 }
 
 export function stageFile(path: string): Promise<void> {

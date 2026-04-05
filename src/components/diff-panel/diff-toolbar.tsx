@@ -52,10 +52,18 @@ export function DiffToolbar({
           size="sm"
           variant="outline"
         >
-          <ToggleGroupItem value="unified" title="Unified view" className="h-7 px-1.5">
+          <ToggleGroupItem
+            value="unified"
+            title="Unified view"
+            className="h-7 px-1.5"
+          >
             <IconLayoutRows className="size-3.5" />
           </ToggleGroupItem>
-          <ToggleGroupItem value="split" title="Split view" className="h-7 px-1.5">
+          <ToggleGroupItem
+            value="split"
+            title="Split view"
+            className="h-7 px-1.5"
+          >
             <IconLayoutColumns className="size-3.5" />
           </ToggleGroupItem>
         </ToggleGroup>

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use git2::{DiffFormat, DiffOptions, Repository, Status, StatusOptions};
+use git2::{Repository, Status, StatusOptions};
 use serde::Serialize;
 use tauri::State;
 
@@ -188,85 +188,105 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
     })
 }
 
-/// Generate a unified diff (git format) for a single file vs HEAD.
-/// Includes both staged and unstaged changes.
-/// Output is suitable for `@pierre/diffs` PatchDiff component.
+/// Return the old (HEAD) and new (workdir) contents of a file for client-side diffing.
+/// This gives `@pierre/diffs` `parseDiffFromFile` full file contents so hunk
+/// expansion and custom hunk separators work correctly.
+#[derive(Serialize)]
+pub struct FileContentsResponse {
+    pub name: String,
+    /// None when the file is absent on the HEAD side.
+    pub old_content: Option<String>,
+    /// True when the HEAD side exists but is not valid UTF-8 text.
+    pub old_binary: bool,
+    /// None when the file is absent on the workdir side.
+    pub new_content: Option<String>,
+    /// True when the workdir side exists but is not valid UTF-8 text.
+    pub new_binary: bool,
+}
+
+struct FileSideContent {
+    content: Option<String>,
+    is_binary: bool,
+}
+
+impl FileSideContent {
+    /// File is absent from this side (no tree entry, or file doesn't exist on disk).
+    fn absent() -> Self {
+        Self { content: None, is_binary: false }
+    }
+}
+
+fn decode_file_side(bytes: &[u8]) -> FileSideContent {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => FileSideContent {
+            content: Some(text.to_owned()),
+            is_binary: false,
+        },
+        Err(_) => FileSideContent {
+            content: None,
+            is_binary: true,
+        },
+    }
+}
+
+fn read_head_file(repo: &Repository, path: &Path) -> Result<FileSideContent, String> {
+    let Some(tree) = repo
+        .revparse_single("HEAD^{tree}")
+        .ok()
+        .and_then(|obj| obj.into_tree().ok())
+    else {
+        return Ok(FileSideContent::absent());
+    };
+
+    let Ok(entry) = tree.get_path(path) else {
+        return Ok(FileSideContent::absent());
+    };
+
+    let object = entry
+        .to_object(repo)
+        .map_err(|e| format!("cannot read HEAD object for {}: {e}", path.display()))?;
+    let blob = object
+        .into_blob()
+        .map_err(|_| format!("HEAD entry for {} is not a blob", path.display()))?;
+
+    Ok(decode_file_side(blob.content()))
+}
+
+fn read_workdir_file(workdir: &Path, path: &Path) -> Result<FileSideContent, String> {
+    let abs = workdir.join(path);
+    if !abs.exists() {
+        return Ok(FileSideContent::absent());
+    }
+
+    let bytes = std::fs::read(&abs)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    Ok(decode_file_side(&bytes))
+}
+
 #[tauri::command]
-pub fn get_file_diff(path: String, state: State<AppState>) -> Result<String, String> {
+pub fn get_file_contents(
+    path: String,
+    state: State<AppState>,
+) -> Result<FileContentsResponse, String> {
     let lock = state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
+    let workdir = repo.workdir().ok_or("bare repository")?;
+    let relative_path = Path::new(&path);
 
-    // Resolve HEAD tree. None for repos with no commits (unborn HEAD).
-    let head_tree = repo
-        .revparse_single("HEAD^{tree}")
-        .ok()
-        .and_then(|obj| obj.into_tree().ok());
+    let old_side = read_head_file(repo, relative_path)?;
+    let new_side = read_workdir_file(workdir, relative_path)?;
 
-    let mut opts = DiffOptions::new();
-    opts.pathspec(&path).include_untracked(true);
-
-    let diff = repo
-        .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))
-        .map_err(|e| format!("failed to generate diff: {e}"))?;
-
-    let mut output = String::new();
-    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
-        // Content lines (+, -, space) need their prefix character prepended.
-        // Header lines (file headers, hunk headers, binary markers) have
-        // their content pre-formatted by libgit2.
-        if matches!(line.origin(), '+' | '-' | ' ') {
-            output.push(line.origin());
-        }
-        if let Ok(content) = std::str::from_utf8(line.content()) {
-            output.push_str(content);
-        }
-        true
+    Ok(FileContentsResponse {
+        name: path,
+        old_content: old_side.content,
+        old_binary: old_side.is_binary,
+        new_content: new_side.content,
+        new_binary: new_side.is_binary,
     })
-    .map_err(|e| format!("failed to format diff: {e}"))?;
-
-    // Untracked files aren't in HEAD or the index, so the tree-to-workdir
-    // diff produces nothing. Build the patch from working directory contents.
-    if output.is_empty() {
-        let workdir = repo.workdir().ok_or("bare repository")?;
-        let abs = workdir.join(&path);
-        let bytes = std::fs::read(&abs)
-            .map_err(|e| format!("cannot read {path}: {e}"))?;
-        output = match std::str::from_utf8(&bytes) {
-            Ok(text) => format_new_file_patch(&path, text),
-            Err(_) => format!(
-                "diff --git a/{path} b/{path}\nnew file mode 100644\nBinary files /dev/null and b/{path} differ\n"
-            ),
-        };
-    }
-
-    if output.is_empty() {
-        return Err(format!("no changes found for {path}"));
-    }
-
-    Ok(output)
-}
-
-fn format_new_file_patch(path: &str, contents: &str) -> String {
-    let mut out = format!(
-        "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
-    );
-    let lines: Vec<&str> = contents.lines().collect();
-    if lines.is_empty() {
-        return out;
-    }
-    out.push_str(&format!("@@ -0,0 +1,{} @@\n", lines.len()));
-    for line in &lines {
-        out.push('+');
-        out.push_str(line);
-        out.push('\n');
-    }
-    if !contents.ends_with('\n') {
-        out.push_str("\\ No newline at end of file\n");
-    }
-    out
 }
 
 fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {

@@ -13,7 +13,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             git::open_repo,
             git::get_repo_status,
-            git::get_file_diff,
+            git::get_file_contents,
             git::stage_file,
             git::unstage_file,
             git::stage_all,
