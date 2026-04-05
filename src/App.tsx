@@ -11,7 +11,7 @@ import { useRepoStatus } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
 import { useFileWatcher } from "@/hooks/use-file-watcher";
-import { stageFile, unstageFile, stageAll, unstageAll, commit, type FileEntry } from "@/lib/tauri";
+import { stageFile, unstageFile, stageAll, unstageAll, commit, submitReview, type FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 
 function App() {
@@ -21,6 +21,7 @@ function App() {
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
   const [allExpanded, setAllExpanded] = useState(true);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   useFileWatcher(
     useCallback(() => {
@@ -122,14 +123,21 @@ function App() {
     [refresh],
   );
 
-  const handleSubmitReview = useCallback(() => {
+  const handleSubmitReview = useCallback(async () => {
     const reviewComments = comments.collectAllComments();
-    if (reviewComments.length === 0) return;
-    // TODO: send to MCP sidecar via Tauri IPC
-    console.log("Review submitted:", reviewComments);
-    toast.success(`Submitted ${reviewComments.length} comment(s)`);
-    comments.clearAll();
-  }, [comments]);
+    if (reviewComments.length === 0 || submittingReview) return;
+
+    setSubmittingReview(true);
+    try {
+      const result = await submitReview(reviewComments);
+      toast.success(`Submitted ${result.submitted_count} comment(s)`);
+      comments.clearAll();
+    } catch (e) {
+      toast.error(`Review submit failed: ${e}`);
+    } finally {
+      setSubmittingReview(false);
+    }
+  }, [comments, submittingReview]);
 
   if (error) {
     return (
@@ -188,6 +196,7 @@ function App() {
             onDeleteAnnotation={comments.deleteAnnotation}
             onToggleStage={handleToggleStage}
             onSubmitReview={handleSubmitReview}
+            submittingReview={submittingReview}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

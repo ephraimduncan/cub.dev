@@ -51,6 +51,7 @@ interface DiffPanelProps {
   ) => void;
   onToggleStage: (path: string) => void;
   onSubmitReview: () => void;
+  submittingReview: boolean;
 }
 
 function getStageState(
@@ -107,6 +108,7 @@ export function DiffPanel({
   onDeleteAnnotation,
   onToggleStage,
   onSubmitReview,
+  submittingReview,
 }: DiffPanelProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -180,6 +182,7 @@ export function DiffPanel({
         onToggleExpandAll={onToggleExpandAll}
         commentCount={totalCommentCount}
         onSubmitReview={onSubmitReview}
+        submittingReview={submittingReview}
       />
       <div className="min-h-0 flex-1 overflow-auto">
         {parsedFiles.length === 0 ? (

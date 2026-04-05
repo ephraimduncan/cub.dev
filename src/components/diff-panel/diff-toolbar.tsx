@@ -16,6 +16,7 @@ interface DiffToolbarProps {
   onToggleExpandAll: () => void;
   commentCount: number;
   onSubmitReview: () => void;
+  submittingReview: boolean;
 }
 
 export function DiffToolbar({
@@ -25,6 +26,7 @@ export function DiffToolbar({
   onToggleExpandAll,
   commentCount,
   onSubmitReview,
+  submittingReview,
 }: DiffToolbarProps) {
   return (
     <div className="sticky top-0 z-10 flex h-10 items-center justify-end border-b bg-background px-3">
@@ -71,10 +73,10 @@ export function DiffToolbar({
         <Button
           size="sm"
           className="text-xs h-7"
-          disabled={commentCount === 0}
+          disabled={commentCount === 0 || submittingReview}
           onClick={onSubmitReview}
         >
-          Submit Review
+          {submittingReview ? "Submitting…" : "Submit Review"}
           {commentCount > 0 && (
             <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">
               {commentCount}

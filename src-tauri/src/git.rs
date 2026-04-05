@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Child;
 use std::sync::Mutex;
 
 use git2::{Repository, Status, StatusOptions};
@@ -8,6 +9,7 @@ use tauri::State;
 
 pub struct AppState {
     pub repo: Mutex<Option<Repository>>,
+    pub bridge: Mutex<Option<Child>>,
 }
 
 #[derive(Serialize, Clone)]

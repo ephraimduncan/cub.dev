@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-
+import type { ReviewComment } from "@/types/comments";
 export type ChangeKind =
   | "added"
   | "modified"
@@ -60,4 +60,14 @@ export function unstageAll(): Promise<void> {
 
 export function commit(message: string): Promise<string> {
   return invoke<string>("commit", { message });
+}
+
+export interface SubmitReviewResponse {
+  submitted_count: number;
+}
+
+export function submitReview(
+  comments: ReviewComment[],
+): Promise<SubmitReviewResponse> {
+  return invoke<SubmitReviewResponse>("submit_review", { comments });
 }
