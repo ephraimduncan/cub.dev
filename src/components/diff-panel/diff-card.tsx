@@ -1,4 +1,10 @@
-import { forwardRef, memo, useCallback, useLayoutEffect, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useState,
+} from "react";
 import type {
   AnnotationSide,
   DiffLineAnnotation,
@@ -66,8 +72,8 @@ interface DiffCardProps {
   onToggleStage: (path: string) => void;
 }
 
-export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
-  function DiffCard(
+export const DiffCard = memo(
+  forwardRef<HTMLDivElement, DiffCardProps>(function DiffCard(
     {
       filePath,
       fileDiff,
@@ -95,9 +101,13 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
     useLayoutEffect(() => {
       setIsOpen(expanded);
     }, [expanded]);
-    const [selectedLines, setSelectedLines] = useState<SelectedLineRange | null>(null);
+    const [selectedLines, setSelectedLines] =
+      useState<SelectedLineRange | null>(null);
 
-    const handleToggleStage = useCallback(() => onToggleStage(filePath), [filePath, onToggleStage]);
+    const handleToggleStage = useCallback(
+      () => onToggleStage(filePath),
+      [filePath, onToggleStage],
+    );
 
     const parts = filePath.split("/");
     const filename = parts.pop() ?? filePath;
@@ -121,7 +131,12 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
     const handleGutterClick = useCallback(
       (range: SelectedLineRange) => {
         if (range.side != null) {
-          onAddAnnotation(filePath, range.side as AnnotationSide, range.start, range.start);
+          onAddAnnotation(
+            filePath,
+            range.side as AnnotationSide,
+            range.start,
+            range.start,
+          );
         }
       },
       [filePath, onAddAnnotation],
@@ -142,7 +157,11 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
                 )
               }
               onCancel={() =>
-                onCancelAnnotation(filePath, annotation.side, annotation.lineNumber)
+                onCancelAnnotation(
+                  filePath,
+                  annotation.side,
+                  annotation.lineNumber,
+                )
               }
             />
           );
@@ -152,7 +171,11 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
             text={annotation.metadata.text!}
             actionType={annotation.metadata.actionType!}
             onDelete={() =>
-              onDeleteAnnotation(filePath, annotation.side, annotation.lineNumber)
+              onDeleteAnnotation(
+                filePath,
+                annotation.side,
+                annotation.lineNumber,
+              )
             }
           />
         );
@@ -172,7 +195,7 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full items-center gap-2 border-b bg-muted/30 px-3 py-2 cursor-pointer text-left"
+            className="flex w-full items-center gap-2 border-b bg-muted/30 px-3 py-3 cursor-pointer text-left"
           >
             <IconChevronDown
               className={cn(
@@ -189,24 +212,43 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
               }}
               className="size-4"
             />
-            <span className={cn("shrink-0 text-sm font-medium", STATUS_COLORS[kind] ?? "text-foreground")}>{filename}</span>
+            <span
+              className={cn(
+                "shrink-0 text-sm font-medium",
+                STATUS_COLORS[kind] ?? "text-foreground",
+              )}
+            >
+              {filename}
+            </span>
             {dir && (
-              <span className="truncate text-xs text-muted-foreground">{dir}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {dir}
+              </span>
             )}
             <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-xs">
-              {additions > 0 && <span className="text-green-600 dark:text-green-400">+{additions}</span>}
-              {deletions > 0 && <span className="text-red-600 dark:text-red-400">-{deletions}</span>}
+              {additions > 0 && (
+                <span className="text-green-600 dark:text-green-400">
+                  +{additions}
+                </span>
+              )}
+              {deletions > 0 && (
+                <span className="text-red-600 dark:text-red-400">
+                  -{deletions}
+                </span>
+              )}
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent keepMounted>
             <FileDiff<CommentMetadata>
               fileDiff={fileDiff}
               className="min-w-0 overflow-hidden"
-              style={{
-                "--diffs-font-family": "'Berkeley Mono', monospace",
-                "--diffs-font-size": "14px",
-                "--diffs-line-height": "20px",
-              } as React.CSSProperties}
+              style={
+                {
+                  "--diffs-font-family": "'App Mono', monospace",
+                  "--diffs-font-size": "14px",
+                  "--diffs-line-height": "20px",
+                } as React.CSSProperties
+              }
               options={{
                 themeType: "system",
                 diffStyle,
@@ -227,7 +269,7 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
         </Collapsible>
       </div>
     );
-  },
-));
+  }),
+);
 
 DiffCard.displayName = "DiffCard";

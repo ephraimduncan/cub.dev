@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use git2::{DiffFormat, DiffOptions, Repository, StatusOptions};
+use git2::{DiffFormat, DiffOptions, Repository, Status, StatusOptions};
 use serde::Serialize;
 use tauri::State;
 
@@ -269,6 +269,93 @@ fn format_new_file_patch(path: &str, contents: &str) -> String {
     out
 }
 
+fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {
+    let repo_path = Path::new(path);
+    let workdir = repo.workdir().ok_or("bare repository")?;
+    let exists_in_workdir = workdir.join(repo_path).exists();
+
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("failed to get index: {e}"))?;
+
+    if exists_in_workdir {
+        index
+            .add_path(repo_path)
+            .map_err(|e| format!("failed to stage file: {e}"))?;
+    } else {
+        let status = match repo.status_file(repo_path) {
+            Ok(status) => status,
+            Err(_) => return Ok(()),
+        };
+
+        if !status.intersects(
+            Status::WT_DELETED
+                | Status::WT_RENAMED
+                | Status::WT_TYPECHANGE
+                | Status::INDEX_DELETED
+                | Status::INDEX_RENAMED
+                | Status::INDEX_TYPECHANGE,
+        ) {
+            return Ok(());
+        }
+
+        index
+            .remove_path(repo_path)
+            .map_err(|e| format!("failed to stage file: {e}"))?;
+    }
+
+    index
+        .write()
+        .map_err(|e| format!("failed to write index: {e}"))?;
+
+    Ok(())
+}
+
+fn unstage_path(repo: &Repository, path: &str) -> Result<(), String> {
+    match repo.revparse_single("HEAD") {
+        Ok(head_obj) => {
+            repo.reset_default(Some(&head_obj), [path])
+                .map_err(|e| format!("failed to unstage file: {e}"))?;
+        }
+        Err(_) => {
+            // No HEAD yet (initial commit) — remove from index directly
+            let mut index = repo
+                .index()
+                .map_err(|e| format!("failed to get index: {e}"))?;
+            index
+                .remove_path(Path::new(path))
+                .map_err(|e| format!("failed to unstage file: {e}"))?;
+            index
+                .write()
+                .map_err(|e| format!("failed to write index: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| format!("failed to get status: {e}"))?;
+
+    let mut paths = Vec::new();
+    for entry in statuses.iter() {
+        if entry.status().intersects(flags) {
+            if let Some(path) = entry.path() {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 #[tauri::command]
 pub fn stage_file(path: String, state: State<AppState>) -> Result<(), String> {
     let lock = state
@@ -277,17 +364,27 @@ pub fn stage_file(path: String, state: State<AppState>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
-    let mut index = repo
-        .index()
-        .map_err(|e| format!("failed to get index: {e}"))?;
+    stage_path(repo, &path)
+}
 
-    index
-        .add_path(Path::new(&path))
-        .map_err(|e| format!("failed to stage file: {e}"))?;
+#[tauri::command]
+pub fn stage_all(state: State<AppState>) -> Result<(), String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
 
-    index
-        .write()
-        .map_err(|e| format!("failed to write index: {e}"))?;
+    for path in collect_paths(
+        repo,
+        Status::WT_NEW
+            | Status::WT_MODIFIED
+            | Status::WT_DELETED
+            | Status::WT_RENAMED
+            | Status::WT_TYPECHANGE,
+    )? {
+        stage_path(repo, &path)?;
+    }
 
     Ok(())
 }
@@ -300,23 +397,26 @@ pub fn unstage_file(path: String, state: State<AppState>) -> Result<(), String> 
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
-    match repo.revparse_single("HEAD") {
-        Ok(head_obj) => {
-            repo.reset_default(Some(&head_obj), [path.as_str()])
-                .map_err(|e| format!("failed to unstage file: {e}"))?;
-        }
-        Err(_) => {
-            // No HEAD yet (initial commit) — remove from index directly
-            let mut index = repo
-                .index()
-                .map_err(|e| format!("failed to get index: {e}"))?;
-            index
-                .remove_path(Path::new(&path))
-                .map_err(|e| format!("failed to unstage file: {e}"))?;
-            index
-                .write()
-                .map_err(|e| format!("failed to write index: {e}"))?;
-        }
+    unstage_path(repo, &path)
+}
+
+#[tauri::command]
+pub fn unstage_all(state: State<AppState>) -> Result<(), String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+
+    for path in collect_paths(
+        repo,
+        Status::INDEX_NEW
+            | Status::INDEX_MODIFIED
+            | Status::INDEX_DELETED
+            | Status::INDEX_RENAMED
+            | Status::INDEX_TYPECHANGE,
+    )? {
+        unstage_path(repo, &path)?;
     }
 
     Ok(())

@@ -36,8 +36,16 @@ export function stageFile(path: string): Promise<void> {
   return invoke<void>("stage_file", { path });
 }
 
+export function stageAll(): Promise<void> {
+  return invoke<void>("stage_all");
+}
+
 export function unstageFile(path: string): Promise<void> {
   return invoke<void>("unstage_file", { path });
+}
+
+export function unstageAll(): Promise<void> {
+  return invoke<void>("unstage_all");
 }
 
 export function commit(message: string): Promise<string> {

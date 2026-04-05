@@ -34,7 +34,7 @@ export function Sidebar({
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border px-3 py-2">
+      <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
         <h2 className="truncate text-xs font-medium text-muted-foreground">
           {workdir ?? "Repository"}
         </h2>

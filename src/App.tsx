@@ -11,7 +11,7 @@ import { useRepoStatus } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
 import { useFileWatcher } from "@/hooks/use-file-watcher";
-import { stageFile, unstageFile, commit, type FileEntry } from "@/lib/tauri";
+import { stageFile, unstageFile, stageAll, unstageAll, commit, type FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 
 function App() {
@@ -79,28 +79,22 @@ function App() {
   );
 
   const handleStageAll = useCallback(async () => {
-    if (!status) return;
     try {
-      for (const f of status.unstaged) {
-        await stageFile(f.path);
-      }
+      await stageAll();
       await refresh();
     } catch (e) {
       toast.error(`Stage all failed: ${e}`);
     }
-  }, [status, refresh]);
+  }, [refresh]);
 
   const handleUnstageAll = useCallback(async () => {
-    if (!status) return;
     try {
-      for (const f of status.staged) {
-        await unstageFile(f.path);
-      }
+      await unstageAll();
       await refresh();
     } catch (e) {
       toast.error(`Unstage all failed: ${e}`);
     }
-  }, [status, refresh]);
+  }, [refresh]);
 
   const handleCommit = useCallback(
     async (message: string) => {

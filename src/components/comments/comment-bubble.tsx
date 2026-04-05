@@ -3,7 +3,10 @@ import { Badge } from "@/components/ui/badge";
 import { IconX } from "@tabler/icons-react";
 import type { ActionType } from "@/types/comments";
 
-const ACTION_LABELS: Record<ActionType, { label: string; variant: "destructive" | "secondary" | "outline" }> = {
+const ACTION_LABELS: Record<
+  ActionType,
+  { label: string; variant: "destructive" | "secondary" | "outline" }
+> = {
   "change-request": { label: "Change Request", variant: "destructive" },
   question: { label: "Question", variant: "secondary" },
   nit: { label: "Nit", variant: "outline" },
@@ -15,7 +18,11 @@ interface CommentBubbleProps {
   onDelete: () => void;
 }
 
-export function CommentBubble({ text, actionType, onDelete }: CommentBubbleProps) {
+export function CommentBubble({
+  text,
+  actionType,
+  onDelete,
+}: CommentBubbleProps) {
   const action = ACTION_LABELS[actionType];
 
   return (

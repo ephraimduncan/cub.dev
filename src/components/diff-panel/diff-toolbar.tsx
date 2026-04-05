@@ -27,7 +27,7 @@ export function DiffToolbar({
   onSubmitReview,
 }: DiffToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 flex items-center justify-end border-b bg-background px-3 py-1.5">
+    <div className="sticky top-0 z-10 flex h-10 items-center justify-end border-b bg-background px-3">
       <div className="flex items-center gap-1.5">
         <Button
           variant="ghost"
