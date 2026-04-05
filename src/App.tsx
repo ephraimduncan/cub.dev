@@ -18,7 +18,7 @@ function App() {
   const { workdir, status, error, refresh } = useRepoStatus();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
-  const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
+  const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
   const [allExpanded, setAllExpanded] = useState(true);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
 
@@ -166,6 +166,7 @@ function App() {
             onSelectFile={handleSelectFile}
             onToggleStage={handleToggleStage}
             onStageAll={handleStageAll}
+            onUnstageAll={handleUnstageAll}
             onCommit={handleCommit}
             onCommitAndPush={handleCommitAndPush}
           />
@@ -192,8 +193,6 @@ function App() {
             onSubmitAnnotation={comments.submitAnnotation}
             onDeleteAnnotation={comments.deleteAnnotation}
             onToggleStage={handleToggleStage}
-            onStageAll={handleStageAll}
-            onUnstageAll={handleUnstageAll}
             onSubmitReview={handleSubmitReview}
           />
         </ResizablePanel>

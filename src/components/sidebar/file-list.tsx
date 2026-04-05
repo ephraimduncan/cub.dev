@@ -16,6 +16,7 @@ interface FileListProps {
   onSelectFile: (path: string) => void;
   onToggleStage: (path: string) => void;
   onStageAll?: () => void;
+  onUnstageAll?: () => void;
 }
 
 export function FileList({
@@ -26,6 +27,7 @@ export function FileList({
   onSelectFile,
   onToggleStage,
   onStageAll,
+  onUnstageAll,
 }: FileListProps) {
   if (files.length === 0) return null;
 
@@ -45,6 +47,16 @@ export function FileList({
             onClick={onStageAll}
           >
             Stage All
+          </Button>
+        )}
+        {onUnstageAll && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={onUnstageAll}
+          >
+            Unstage All
           </Button>
         )}
       </div>

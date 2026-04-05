@@ -12,6 +12,7 @@ interface SidebarProps {
   onSelectFile: (path: string) => void;
   onToggleStage: (path: string) => void;
   onStageAll: () => void;
+  onUnstageAll: () => void;
   onCommit: (message: string) => void;
   onCommitAndPush: (message: string) => void;
 }
@@ -25,6 +26,7 @@ export function Sidebar({
   onSelectFile,
   onToggleStage,
   onStageAll,
+  onUnstageAll,
   onCommit,
   onCommitAndPush,
 }: SidebarProps) {
@@ -51,6 +53,7 @@ export function Sidebar({
             selectedFile={selectedFile}
             onSelectFile={onSelectFile}
             onToggleStage={onToggleStage}
+            onUnstageAll={onUnstageAll}
           />
           <FileList
             label="Unstaged"

@@ -135,3 +135,13 @@
 [data-panel] {
   overflow: hidden !important;
 }
+
+/* base-ui Collapsible: enable CSS transition so the controlled-mode
+   close path works with keepMounted. Without this, the Panel never
+   sets mounted=false and content stays visible on collapse. */
+[data-slot="collapsible-content"] {
+  overflow: hidden;
+  transition-property: height;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}

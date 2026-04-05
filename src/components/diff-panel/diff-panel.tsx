@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef } from "react";
-import type { AnnotationSide, DiffLineAnnotation } from "@pierre/diffs";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { AnnotationSide, DiffLineAnnotation, FileDiffMetadata } from "@pierre/diffs";
+import { parsePatchFiles } from "@pierre/diffs";
 import { DiffToolbar } from "./diff-toolbar";
 import { DiffCard } from "./diff-card";
-import type { FileEntry } from "@/lib/tauri";
+import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
 interface DiffPanelProps {
@@ -45,8 +45,6 @@ interface DiffPanelProps {
     lineNumber: number,
   ) => void;
   onToggleStage: (path: string) => void;
-  onStageAll: () => void;
-  onUnstageAll: () => void;
   onSubmitReview: () => void;
 }
 
@@ -63,6 +61,14 @@ function getStageState(
 }
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
+
+interface ParsedFile {
+  filePath: string;
+  fileDiff: FileDiffMetadata;
+  additions: number;
+  deletions: number;
+  kind: ChangeKind;
+}
 
 export function DiffPanel({
   files,
@@ -84,8 +90,6 @@ export function DiffPanel({
   onSubmitAnnotation,
   onDeleteAnnotation,
   onToggleStage,
-  onStageAll,
-  onUnstageAll,
   onSubmitReview,
 }: DiffPanelProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -110,6 +114,24 @@ export function DiffPanel({
     onScrollComplete();
   }, [scrollToPath, onScrollComplete]);
 
+  // Pre-parse all patches once, producing FileDiffMetadata per file.
+  // parsePatchFiles returns ParsedPatch[] (one per commit). Each patch has a
+  // `files` array of FileDiffMetadata. We flatten into a lookup keyed by path.
+  const parsedFiles = useMemo(() => {
+    const result: ParsedFile[] = [];
+    for (const file of files) {
+      const patch = diffs.get(file.path);
+      if (!patch) continue;
+      const parsed = parsePatchFiles(patch, file.path);
+      // Each single-file patch produces one ParsedPatch with one file entry.
+      const fileDiff = parsed[0]?.files[0];
+      if (fileDiff) {
+        result.push({ filePath: file.path, fileDiff, additions: file.additions, deletions: file.deletions, kind: file.kind });
+      }
+    }
+    return result;
+  }, [files, diffs]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -125,41 +147,38 @@ export function DiffPanel({
         onDiffStyleChange={onDiffStyleChange}
         allExpanded={allExpanded}
         onToggleExpandAll={onToggleExpandAll}
-        onStageAll={onStageAll}
-        onUnstageAll={onUnstageAll}
         commentCount={totalCommentCount}
         onSubmitReview={onSubmitReview}
       />
-      <ScrollArea className="min-h-0 flex-1">
-          {files.length === 0 ? (
+      <div className="flex-1 min-h-0 overflow-auto">
+          {parsedFiles.length === 0 ? (
             <div className="flex h-full items-center justify-center py-20">
               <p className="text-sm text-muted-foreground">No changes to review</p>
             </div>
           ) : (
-            files.map((file) => {
-              const patch = diffs.get(file.path);
-              if (!patch) return null;
-              return (
-                <DiffCard
-                  key={file.path}
-                  ref={setCardRef(file.path)}
-                  filePath={file.path}
-                  patch={patch}
-                  stageState={getStageState(file.path, stagedPaths, unstaged)}
-                  diffStyle={diffStyle}
-                  expanded={allExpanded}
-                  annotations={annotationsByFile.get(file.path) ?? EMPTY_ANNOTATIONS}
-                  hasOpenForm={hasOpenForm}
-                  onAddAnnotation={onAddAnnotation}
-                  onCancelAnnotation={onCancelAnnotation}
-                  onSubmitAnnotation={onSubmitAnnotation}
-                  onDeleteAnnotation={onDeleteAnnotation}
-                  onToggleStage={onToggleStage}
-                />
-              );
-            })
+            parsedFiles.map(({ filePath, fileDiff, additions, deletions, kind }) => (
+              <DiffCard
+                key={filePath}
+                ref={setCardRef(filePath)}
+                filePath={filePath}
+                fileDiff={fileDiff}
+                additions={additions}
+                deletions={deletions}
+                kind={kind}
+                stageState={getStageState(filePath, stagedPaths, unstaged)}
+                diffStyle={diffStyle}
+                expanded={allExpanded}
+                annotations={annotationsByFile.get(filePath) ?? EMPTY_ANNOTATIONS}
+                hasOpenForm={hasOpenForm}
+                onAddAnnotation={onAddAnnotation}
+                onCancelAnnotation={onCancelAnnotation}
+                onSubmitAnnotation={onSubmitAnnotation}
+                onDeleteAnnotation={onDeleteAnnotation}
+                onToggleStage={onToggleStage}
+              />
+            ))
           )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }

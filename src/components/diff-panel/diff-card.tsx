@@ -1,12 +1,12 @@
-import { forwardRef, memo, useCallback, useState } from "react";
+import { forwardRef, memo, useCallback, useLayoutEffect, useState } from "react";
 import type {
   AnnotationSide,
   DiffLineAnnotation,
+  FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { PatchDiff } from "@pierre/diffs/react";
+import { FileDiff } from "@pierre/diffs/react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -15,14 +15,26 @@ import {
 import { CommentForm } from "@/components/comments/comment-form";
 import { CommentBubble } from "@/components/comments/comment-bubble";
 import { cn } from "@/lib/utils";
-import { IconChevronDown, IconMinus } from "@tabler/icons-react";
+import { IconChevronDown } from "@tabler/icons-react";
+import type { ChangeKind } from "@/lib/tauri";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
 type StageState = "staged" | "unstaged" | "partial";
 
+const STATUS_COLORS: Record<string, string> = {
+  added: "text-emerald-500",
+  modified: "text-amber-500",
+  deleted: "text-red-500",
+  renamed: "text-blue-500",
+  typechange: "text-purple-500",
+};
+
 interface DiffCardProps {
   filePath: string;
-  patch: string;
+  fileDiff: FileDiffMetadata;
+  additions: number;
+  deletions: number;
+  kind: ChangeKind;
   stageState: StageState;
   diffStyle: "unified" | "split";
   expanded: boolean;
@@ -58,7 +70,10 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
   function DiffCard(
     {
       filePath,
-      patch,
+      fileDiff,
+      additions,
+      deletions,
+      kind,
       stageState,
       diffStyle,
       expanded,
@@ -73,6 +88,13 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
     ref,
   ) {
     const [isOpen, setIsOpen] = useState(expanded);
+
+    // Sync when parent toggles expand/collapse all.
+    // useLayoutEffect (not useEffect) to update before paint — no visible flicker.
+    // keepMounted on CollapsibleContent avoids re-mount cost on subsequent toggles.
+    useLayoutEffect(() => {
+      setIsOpen(expanded);
+    }, [expanded]);
     const [selectedLines, setSelectedLines] = useState<SelectedLineRange | null>(null);
 
     const handleToggleStage = useCallback(() => onToggleStage(filePath), [filePath, onToggleStage]);
@@ -146,17 +168,18 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
           : "mixed";
 
     return (
-      <div ref={ref} className="min-w-0 w-full overflow-hidden">
+      <div ref={ref} className="min-w-0 w-full overflow-clip">
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-          <div className="flex items-center gap-1.5 border-b bg-muted/30 px-3 py-1">
-            <CollapsibleTrigger className="flex items-center">
-              <IconChevronDown
-                className={cn(
-                  "size-3.5 text-muted-foreground transition-transform",
-                  !isOpen && "-rotate-90",
-                )}
-              />
-            </CollapsibleTrigger>
+          <CollapsibleTrigger
+            render={<button type="button" />}
+            className="flex w-full items-center gap-2 border-b bg-muted/30 px-3 py-2 cursor-pointer text-left"
+          >
+            <IconChevronDown
+              className={cn(
+                "size-4 text-muted-foreground transition-transform",
+                !isOpen && "-rotate-90",
+              )}
+            />
             <Checkbox
               checked={checkboxChecked === "mixed" ? false : checkboxChecked}
               indeterminate={checkboxChecked === "mixed"}
@@ -164,29 +187,20 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
                 e.stopPropagation();
                 handleToggleStage();
               }}
-              className="size-3.5"
+              className="size-4"
             />
-            {checkboxChecked === "mixed" && (
-              <IconMinus className="absolute size-2.5 text-primary pointer-events-none" />
-            )}
-            <span className="text-xs font-medium">{filename}</span>
+            <span className={cn("shrink-0 text-sm font-medium", STATUS_COLORS[kind] ?? "text-foreground")}>{filename}</span>
             {dir && (
-              <span className="text-[10px] text-muted-foreground">{dir}</span>
+              <span className="truncate text-xs text-muted-foreground">{dir}</span>
             )}
-            <div className="ml-auto flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-5 px-1.5 text-[10px]"
-                onClick={handleToggleStage}
-              >
-                {stageState === "staged" ? "Unstage" : "Stage"}
-              </Button>
-            </div>
-          </div>
-          <CollapsibleContent>
-            <PatchDiff<CommentMetadata>
-              patch={patch}
+            <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-xs">
+              {additions > 0 && <span className="text-green-600 dark:text-green-400">+{additions}</span>}
+              {deletions > 0 && <span className="text-red-600 dark:text-red-400">-{deletions}</span>}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent keepMounted>
+            <FileDiff<CommentMetadata>
+              fileDiff={fileDiff}
               className="min-w-0 overflow-hidden"
               style={{
                 "--diffs-font-family": "'Berkeley Mono', monospace",
@@ -194,11 +208,10 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
                 "--diffs-line-height": "20px",
               } as React.CSSProperties}
               options={{
-                theme: { dark: "pierre-dark", light: "pierre-light" },
                 themeType: "system",
                 diffStyle,
-                lineDiffType: "word-alt",
                 overflow: "wrap",
+                lineDiffType: "word-alt",
                 disableFileHeader: true,
                 enableLineSelection: !hasOpenForm,
                 enableGutterUtility: !hasOpenForm,
@@ -208,6 +221,7 @@ export const DiffCard = memo(forwardRef<HTMLDivElement, DiffCardProps>(
               lineAnnotations={annotations}
               selectedLines={selectedLines}
               renderAnnotation={renderAnnotation}
+              disableWorkerPool
             />
           </CollapsibleContent>
         </Collapsible>

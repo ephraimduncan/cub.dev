@@ -43,18 +43,10 @@ export function FileRow({
       )}
       onClick={onSelect}
     >
-      <Checkbox
-        checked={isStaged}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleStage();
-        }}
-        className="size-3.5"
-      />
       <span className={cn("shrink-0 font-mono text-[10px] font-bold", status.className)}>
         {status.letter}
       </span>
-      <span className="truncate font-medium">{filename}</span>
+      <span className="shrink-0 font-medium">{filename}</span>
       {dir && (
         <span className="truncate text-muted-foreground text-[10px]">{dir}</span>
       )}
@@ -66,6 +58,14 @@ export function FileRow({
           <span className="text-red-500">-{file.deletions}</span>
         )}
       </span>
+      <Checkbox
+        checked={isStaged}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleStage();
+        }}
+        className="size-3.5"
+      />
     </div>
   );
 }

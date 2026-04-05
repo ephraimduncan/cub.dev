@@ -5,8 +5,8 @@ import { Separator } from "@/components/ui/separator";
 import {
   IconLayoutColumns,
   IconLayoutRows,
-  IconChevronDown,
-  IconChevronUp,
+  IconFold,
+  IconArrowsVertical,
 } from "@tabler/icons-react";
 
 interface DiffToolbarProps {
@@ -14,8 +14,6 @@ interface DiffToolbarProps {
   onDiffStyleChange: (style: "unified" | "split") => void;
   allExpanded: boolean;
   onToggleExpandAll: () => void;
-  onStageAll: () => void;
-  onUnstageAll: () => void;
   commentCount: number;
   onSubmitReview: () => void;
 }
@@ -25,21 +23,11 @@ export function DiffToolbar({
   onDiffStyleChange,
   allExpanded,
   onToggleExpandAll,
-  onStageAll,
-  onUnstageAll,
   commentCount,
   onSubmitReview,
 }: DiffToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-3 py-1.5">
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="sm" className="text-xs h-7" onClick={onStageAll}>
-          Stage All
-        </Button>
-        <Button variant="ghost" size="sm" className="text-xs h-7" onClick={onUnstageAll}>
-          Unstage All
-        </Button>
-      </div>
+    <div className="sticky top-0 z-10 flex items-center justify-end border-b bg-background px-3 py-1.5">
       <div className="flex items-center gap-1.5">
         <Button
           variant="ghost"
@@ -49,9 +37,9 @@ export function DiffToolbar({
           title={allExpanded ? "Collapse All" : "Expand All"}
         >
           {allExpanded ? (
-            <IconChevronUp className="size-3.5" />
+            <IconFold className="size-3.5" />
           ) : (
-            <IconChevronDown className="size-3.5" />
+            <IconArrowsVertical className="size-3.5" />
           )}
         </Button>
         <Separator orientation="vertical" className="h-4" />
