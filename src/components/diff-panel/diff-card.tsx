@@ -13,6 +13,7 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
+import { getAnnotationTarget } from "./annotation-target";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -148,33 +149,27 @@ export const DiffCard = memo(
     const filename = parts.pop() ?? filePath;
     const dir = parts.length > 0 ? parts.join("/") + "/" : "";
 
-    const handleLineSelectionEnd = useCallback(
-      (range: SelectedLineRange | null) => {
-        setSelectedLines(range);
-        if (range == null) return;
-        const derivedSide = range.endSide ?? range.side;
-        const side: AnnotationSide =
-          derivedSide === "deletions" ? "deletions" : "additions";
-        const lineStart = Math.min(range.start, range.end);
-        const lineEnd = Math.max(range.start, range.end);
-        onAddAnnotation(filePath, side, lineStart, lineEnd);
-        setSelectedLines(null);
+    const addAnnotationForRange = useCallback(
+      (range: SelectedLineRange) => {
+        const target = getAnnotationTarget(range);
+        onAddAnnotation(
+          filePath,
+          target.side,
+          target.lineStart,
+          target.lineEnd,
+        );
       },
       [filePath, onAddAnnotation],
     );
 
-    const handleGutterClick = useCallback(
-      (range: SelectedLineRange) => {
-        if (range.side != null) {
-          onAddAnnotation(
-            filePath,
-            range.side as AnnotationSide,
-            range.start,
-            range.start,
-          );
-        }
+    const handleLineSelectionEnd = useCallback(
+      (range: SelectedLineRange | null) => {
+        setSelectedLines(range);
+        if (range == null) return;
+        addAnnotationForRange(range);
+        setSelectedLines(null);
       },
-      [filePath, onAddAnnotation],
+      [addAnnotationForRange],
     );
 
     const renderAnnotation = useCallback(
@@ -230,9 +225,9 @@ export const DiffCard = memo(
         enableLineSelection: !hasOpenForm,
         enableGutterUtility: !hasOpenForm,
         onLineSelectionEnd: handleLineSelectionEnd,
-        onGutterUtilityClick: handleGutterClick,
+        onGutterUtilityClick: addAnnotationForRange,
       }),
-      [diffStyle, handleGutterClick, handleLineSelectionEnd, hasOpenForm],
+      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm],
     );
 
     const binaryMessage =

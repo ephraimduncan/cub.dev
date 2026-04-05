@@ -37,18 +37,23 @@ export function FileRow({
     <div
       className={cn(
         "group flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs cursor-pointer min-w-0",
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-muted",
+        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
       )}
       onClick={onSelect}
     >
-      <span className={cn("shrink-0 font-mono text-[10px] font-bold", status.className)}>
+      <span
+        className={cn(
+          "shrink-0 font-mono text-[10px] font-bold",
+          status.className,
+        )}
+      >
         {status.letter}
       </span>
       <span className="shrink-0 font-medium">{filename}</span>
       {dir && (
-        <span className="truncate text-muted-foreground text-[10px]">{dir}</span>
+        <span className="truncate text-muted-foreground text-[10px]">
+          {dir}
+        </span>
       )}
       <span className="ml-auto flex shrink-0 gap-1 font-mono text-[10px]">
         {file.additions > 0 && (

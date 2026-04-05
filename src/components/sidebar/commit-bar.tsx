@@ -72,9 +72,7 @@ export function CommitBar({
               }
             />
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleCommit}>
-                Commit
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleCommit}>Commit</DropdownMenuItem>
               <DropdownMenuItem onClick={handleCommitAndPush}>
                 Commit & Push
               </DropdownMenuItem>

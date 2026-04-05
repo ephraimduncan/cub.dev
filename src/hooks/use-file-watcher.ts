@@ -1,9 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export function useFileWatcher(
-  onFilesChanged: () => void,
-  intervalMs = 3000,
-) {
+export function useFileWatcher(onFilesChanged: () => void, intervalMs = 3000) {
   const callbackRef = useRef(onFilesChanged);
   callbackRef.current = onFilesChanged;
 

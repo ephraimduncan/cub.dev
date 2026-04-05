@@ -24,10 +24,7 @@ interface UseDiffsReturn {
   loading: boolean;
 }
 
-function getUniquePaths(
-  staged: FileEntry[],
-  unstaged: FileEntry[],
-): string[] {
+function getUniquePaths(staged: FileEntry[], unstaged: FileEntry[]): string[] {
   const paths = new Set<string>();
   for (const f of staged) paths.add(f.path);
   for (const f of unstaged) paths.add(f.path);

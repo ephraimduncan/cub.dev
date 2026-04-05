@@ -63,7 +63,12 @@ export function CommentForm({ onSubmit, onCancel }: CommentFormProps) {
             }}
           />
           <div className="flex justify-end gap-1.5">
-            <Button variant="ghost" size="sm" className="text-xs" onClick={onCancel}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={onCancel}
+            >
               Cancel
             </Button>
             <Button

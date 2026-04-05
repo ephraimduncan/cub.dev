@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import type { AnnotationSide, DiffLineAnnotation } from "@pierre/diffs";
-import type { ActionType, CommentMetadata, ReviewComment } from "@/types/comments";
+import type {
+  ActionType,
+  CommentMetadata,
+  ReviewComment,
+} from "@/types/comments";
 
 type AnnotationMap = Map<string, DiffLineAnnotation<CommentMetadata>[]>;
 

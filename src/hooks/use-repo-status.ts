@@ -35,7 +35,9 @@ function mergeStatus(raw: RepoStatus): MergedRepoStatus {
 
 function statusFingerprint(s: MergedRepoStatus): string {
   const entries = (files: FileEntry[]) =>
-    files.map((f) => `${f.path}:${f.kind}:${f.additions}:${f.deletions}`).join(",");
+    files
+      .map((f) => `${f.path}:${f.kind}:${f.additions}:${f.deletions}`)
+      .join(",");
   return `${entries(s.staged)}|${entries(s.unstaged)}`;
 }
 
