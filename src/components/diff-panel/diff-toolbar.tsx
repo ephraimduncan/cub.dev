@@ -7,6 +7,7 @@ import {
   IconLayoutRows,
   IconFold,
   IconArrowsVertical,
+  IconCheck,
 } from "@tabler/icons-react";
 
 interface DiffToolbarProps {
@@ -15,8 +16,33 @@ interface DiffToolbarProps {
   allExpanded: boolean;
   onToggleExpandAll: () => void;
   commentCount: number;
+  pendingCount: number;
+  acknowledgedCount: number;
+  resolvedCount: number;
   onSubmitReview: () => void;
+  onClearResolved: () => void;
   submittingReview: boolean;
+}
+
+function StatusSummary({
+  pending,
+  acknowledged,
+  resolved,
+}: {
+  pending: number;
+  acknowledged: number;
+  resolved: number;
+}) {
+  const parts: string[] = [];
+  if (pending > 0) parts.push(`${pending} pending`);
+  if (acknowledged > 0) parts.push(`${acknowledged} reviewing`);
+  if (resolved > 0) parts.push(`${resolved} resolved`);
+  if (parts.length === 0) return null;
+  return (
+    <span className="text-[11px] text-muted-foreground">
+      {parts.join(" · ")}
+    </span>
+  );
 }
 
 export function DiffToolbar({
@@ -25,12 +51,36 @@ export function DiffToolbar({
   allExpanded,
   onToggleExpandAll,
   commentCount,
+  pendingCount,
+  acknowledgedCount,
+  resolvedCount,
   onSubmitReview,
+  onClearResolved,
   submittingReview,
 }: DiffToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 flex h-10 items-center justify-end border-b bg-background px-3">
+    <div className="sticky top-0 z-10 flex h-10 items-center justify-between border-b bg-background px-3">
+      <StatusSummary
+        pending={pendingCount}
+        acknowledged={acknowledgedCount}
+        resolved={resolvedCount}
+      />
       <div className="flex items-center gap-1.5">
+        {resolvedCount > 0 && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+              onClick={onClearResolved}
+              title="Clear resolved comments"
+            >
+              <IconCheck className="size-3" />
+              Clear Resolved
+            </Button>
+            <Separator orientation="vertical" className="h-4" />
+          </>
+        )}
         <Button
           variant="ghost"
           size="sm"

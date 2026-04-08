@@ -38,8 +38,9 @@ export interface FileContentsResponse {
 
 export function getFileContents(
   path: string,
+  staged = false,
 ): Promise<FileContentsResponse> {
-  return invoke<FileContentsResponse>("get_file_contents", { path });
+  return invoke<FileContentsResponse>("get_file_contents", { path, staged });
 }
 
 export function stageFile(path: string): Promise<void> {
@@ -62,8 +63,14 @@ export function commit(message: string): Promise<string> {
   return invoke<string>("commit", { message });
 }
 
+export interface CommentIdMapping {
+  key: string;
+  id: string;
+}
+
 export interface SubmitReviewResponse {
   submitted_count: number;
+  comment_ids: CommentIdMapping[];
 }
 
 export function submitReview(

@@ -54,6 +54,7 @@ export function useDiffs(
 
     void Promise.allSettled(
       paths.map(async (path) => {
+        // TODO: pass staged=true for staged-only files when UI supports separate staged/unstaged diff views
         const resp = await getFileContents(path);
         return [path, resp] as const;
       }),
@@ -66,6 +67,8 @@ export function useDiffs(
           if (result.status === "fulfilled") {
             const [path, resp] = result.value;
             map.set(path, toFileDiffContents(resp));
+          } else {
+            console.warn("[cub] failed to fetch diff:", result.reason);
           }
         }
         setDiffs(map);

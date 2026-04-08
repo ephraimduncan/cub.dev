@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use git2::{Repository, Status, StatusOptions};
 use serde::Serialize;
@@ -10,6 +12,8 @@ use tauri::State;
 pub struct AppState {
     pub repo: Mutex<Option<Repository>>,
     pub bridge: Mutex<Option<Child>>,
+    pub event_listener: Mutex<Option<JoinHandle<()>>>,
+    pub event_listener_stop: Arc<AtomicBool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -256,19 +260,44 @@ fn read_head_file(repo: &Repository, path: &Path) -> Result<FileSideContent, Str
 
 fn read_workdir_file(workdir: &Path, path: &Path) -> Result<FileSideContent, String> {
     let abs = workdir.join(path);
-    if !abs.exists() {
-        return Ok(FileSideContent::absent());
+    let canonical_abs = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            if !abs.exists() {
+                return Ok(FileSideContent::absent());
+            }
+            return Err(format!("cannot canonicalize {}: file exists but path resolution failed", path.display()));
+        }
+    };
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize workdir: {e}"))?;
+    if !canonical_abs.starts_with(&canonical_workdir) {
+        return Err("path traversal detected".to_string());
     }
 
-    let bytes = std::fs::read(&abs)
+    let bytes = std::fs::read(&canonical_abs)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
 
     Ok(decode_file_side(&bytes))
 }
 
+fn read_index_file(repo: &Repository, path: &Path) -> Result<FileSideContent, String> {
+    let index = repo.index().map_err(|e| format!("failed to get index: {e}"))?;
+    let entry = match index.get_path(path, 0) {
+        Some(e) => e,
+        None => return Ok(FileSideContent::absent()),
+    };
+    let blob = repo
+        .find_blob(entry.id)
+        .map_err(|e| format!("cannot read index blob for {}: {e}", path.display()))?;
+    Ok(decode_file_side(blob.content()))
+}
+
 #[tauri::command]
 pub fn get_file_contents(
     path: String,
+    staged: Option<bool>,
     state: State<AppState>,
 ) -> Result<FileContentsResponse, String> {
     let lock = state
@@ -280,7 +309,11 @@ pub fn get_file_contents(
     let relative_path = Path::new(&path);
 
     let old_side = read_head_file(repo, relative_path)?;
-    let new_side = read_workdir_file(workdir, relative_path)?;
+    let new_side = if staged.unwrap_or(false) {
+        read_index_file(repo, relative_path)?
+    } else {
+        read_workdir_file(workdir, relative_path)?
+    };
 
     Ok(FileContentsResponse {
         name: path,
@@ -452,6 +485,10 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
+    if message.trim().is_empty() {
+        return Err("commit message cannot be empty".to_string());
+    }
+
     let mut index = repo
         .index()
         .map_err(|e| format!("failed to get index: {e}"))?;
@@ -459,6 +496,15 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
     let tree_oid = index
         .write_tree()
         .map_err(|e| format!("failed to write tree: {e}"))?;
+
+    // Reject empty commits (no changes staged)
+    if let Ok(head_ref) = repo.head() {
+        if let Ok(head_commit) = head_ref.peel_to_commit() {
+            if head_commit.tree_id() == tree_oid {
+                return Err("nothing to commit: index matches HEAD".to_string());
+            }
+        }
+    }
 
     let tree = repo
         .find_tree(tree_oid)

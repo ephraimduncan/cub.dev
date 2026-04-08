@@ -14,7 +14,6 @@ interface SidebarProps {
   onStageAll: () => void;
   onUnstageAll: () => void;
   onCommit: (message: string) => void;
-  onCommitAndPush: (message: string) => void;
 }
 
 export function Sidebar({
@@ -28,7 +27,6 @@ export function Sidebar({
   onStageAll,
   onUnstageAll,
   onCommit,
-  onCommitAndPush,
 }: SidebarProps) {
   const hasChanges = staged.length > 0 || unstaged.length > 0;
 
@@ -69,7 +67,6 @@ export function Sidebar({
       <CommitBar
         stagedCount={staged.length}
         onCommit={onCommit}
-        onCommitAndPush={onCommitAndPush}
       />
     </div>
   );

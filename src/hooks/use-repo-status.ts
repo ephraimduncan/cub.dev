@@ -56,6 +56,7 @@ export function useRepoStatus(): UseRepoStatusReturn {
 
   const refresh = useCallback(async () => {
     try {
+      setError(null);
       const raw = await getRepoStatus();
       applyStatus(mergeStatus(raw));
     } catch (e) {
@@ -67,6 +68,7 @@ export function useRepoStatus(): UseRepoStatusReturn {
     openRepo(".")
       .then((dir) => {
         setWorkdir(dir);
+        setError(null);
         return getRepoStatus();
       })
       .then((raw) => applyStatus(mergeStatus(raw)))

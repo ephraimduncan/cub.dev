@@ -35,11 +35,19 @@ export function FileRow({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={cn(
         "group flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs cursor-pointer min-w-0",
         isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
       )}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
     >
       <span
         className={cn(

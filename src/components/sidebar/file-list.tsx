@@ -35,7 +35,7 @@ export function FileList({
     <Collapsible defaultOpen>
       <div className="flex items-center justify-between px-1.5 py-1">
         <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-          <IconChevronDown className="size-3 transition-transform [[data-panel-open]_&]:rotate-0 [[data-panel-closed]_&]:-rotate-90" />
+          <IconChevronDown className="size-3 transition-transform -rotate-90 [[data-panel-open]_&]:rotate-0" />
           {label}
           <span className="text-[10px]">({files.length})</span>
         </CollapsibleTrigger>

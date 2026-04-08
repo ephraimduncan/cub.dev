@@ -1,37 +1,19 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { IconChevronDown } from "@tabler/icons-react";
 
 interface CommitBarProps {
   stagedCount: number;
   onCommit: (message: string) => void;
-  onCommitAndPush: (message: string) => void;
 }
 
-export function CommitBar({
-  stagedCount,
-  onCommit,
-  onCommitAndPush,
-}: CommitBarProps) {
+export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
   const [message, setMessage] = useState("");
   const disabled = message.trim() === "" || stagedCount === 0;
 
   const handleCommit = () => {
     if (disabled) return;
     onCommit(message.trim());
-    setMessage("");
-  };
-
-  const handleCommitAndPush = () => {
-    if (disabled) return;
-    onCommitAndPush(message.trim());
     setMessage("");
   };
 
@@ -50,34 +32,15 @@ export function CommitBar({
             }
           }}
         />
-        <div className="absolute bottom-2 right-2 flex items-center gap-0.5">
+        <div className="absolute bottom-2 right-2">
           <Button
             size="sm"
-            className="flex-1 text-xs rounded-r-none"
+            className="text-xs"
             disabled={disabled}
             onClick={handleCommit}
           >
             Commit
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  size="sm"
-                  className="rounded-l-none px-1.5"
-                  disabled={disabled}
-                >
-                  <IconChevronDown className="size-3.5" />
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleCommit}>Commit</DropdownMenuItem>
-              <DropdownMenuItem onClick={handleCommitAndPush}>
-                Commit & Push
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </div>
     </div>

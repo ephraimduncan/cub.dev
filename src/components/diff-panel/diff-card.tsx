@@ -174,7 +174,7 @@ export const DiffCard = memo(
 
     const renderAnnotation = useCallback(
       (annotation: DiffLineAnnotation<CommentMetadata>) => {
-        if (annotation.metadata.isForm) {
+        if (annotation.metadata.status === "draft" && !annotation.metadata.text) {
           return (
             <CommentForm
               onSubmit={(text, actionType) =>
@@ -200,6 +200,9 @@ export const DiffCard = memo(
           <CommentBubble
             text={annotation.metadata.text!}
             actionType={annotation.metadata.actionType!}
+            status={annotation.metadata.status}
+            summary={annotation.metadata.summary}
+            dismissReason={annotation.metadata.dismissReason}
             onDelete={() =>
               onDeleteAnnotation(
                 filePath,
