@@ -29,18 +29,22 @@ export function Sidebar({
   onCommit,
 }: SidebarProps) {
   const hasChanges = staged.length > 0 || unstaged.length > 0;
+  const totalCount = staged.length + unstaged.length;
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
-      <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
-        <h2 className="truncate text-xs font-medium text-muted-foreground">
-          {workdir ?? "Repository"}
-        </h2>
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border/70 bg-sidebar">
+      <div className="flex h-10 items-center justify-between border-b border-border px-3">
+        <p className="truncate text-sm font-medium text-sidebar-foreground">
+          {workdir?.replace(/\/+$/, "").split("/").pop() ?? "No repository"}
+        </p>
+        <p className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {totalCount} file{totalCount === 1 ? "" : "s"}
+        </p>
       </div>
       <ScrollArea className="flex-1">
-        <div className="p-1.5">
+        <div className="space-y-3 p-1.5">
           {!hasChanges && (
-            <p className="px-2 py-4 text-xs text-muted-foreground">
+            <p className="px-2 py-6 text-sm text-muted-foreground">
               No changes
             </p>
           )}
@@ -64,10 +68,7 @@ export function Sidebar({
           />
         </div>
       </ScrollArea>
-      <CommitBar
-        stagedCount={staged.length}
-        onCommit={onCommit}
-      />
+      <CommitBar stagedCount={staged.length} onCommit={onCommit} />
     </div>
   );
 }

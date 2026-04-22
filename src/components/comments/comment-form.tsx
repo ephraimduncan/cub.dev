@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -30,17 +29,28 @@ export function CommentForm({ onSubmit, onCancel }: CommentFormProps) {
   };
 
   return (
-    <div style={{ overflow: "hidden", width: "100%" }}>
-      <div
-        style={{ whiteSpace: "normal", margin: 12 }}
-        className="max-w-[90%] sm:max-w-[70%]"
-      >
-        <div className="rounded-lg border bg-card p-3 shadow-sm space-y-2">
+    <div className="p-2">
+      <div className="overflow-hidden rounded-lg border border-border bg-background">
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Leave a comment..."
+          className="field-sizing-content w-full resize-none bg-transparent px-3 pt-2.5 pb-2 text-sm outline-none placeholder:text-muted-foreground"
+          style={{ minHeight: "4rem" }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
+        />
+        <div className="flex items-center justify-between border-t border-border px-2 py-1.5">
           <Select
             value={actionType}
             onValueChange={(v) => setActionType(v as ActionType)}
           >
-            <SelectTrigger size="sm" className="w-fit text-xs">
+            <SelectTrigger size="sm" className="h-7 w-fit border-none bg-transparent px-2 text-xs shadow-none">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -49,31 +59,12 @@ export function CommentForm({ onSubmit, onCancel }: CommentFormProps) {
               <SelectItem value="nit">Nit</SelectItem>
             </SelectContent>
           </Select>
-          <Textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Leave a comment..."
-            className="min-h-[60px] resize-none text-xs"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-          />
-          <div className="flex justify-end gap-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              onClick={onCancel}
-            >
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="xs" onClick={onCancel}>
               Cancel
             </Button>
             <Button
-              size="sm"
-              className="text-xs"
+              size="xs"
               disabled={text.trim() === ""}
               onClick={handleSubmit}
             >

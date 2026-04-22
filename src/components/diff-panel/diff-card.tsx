@@ -25,22 +25,15 @@ import { CommentBubble } from "@/components/comments/comment-bubble";
 import { cn } from "@/lib/utils";
 import { IconChevronDown } from "@tabler/icons-react";
 import type { ChangeKind } from "@/lib/tauri";
+import { FILE_STATUS, DIFF_ADDITION_COLOR, DIFF_DELETION_COLOR } from "@/lib/status";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
 type StageState = "staged" | "unstaged" | "partial";
 
-const STATUS_COLORS: Record<string, string> = {
-  added: "text-emerald-500",
-  modified: "text-amber-500",
-  deleted: "text-red-500",
-  renamed: "text-blue-500",
-  typechange: "text-purple-500",
-};
-
 const DIFF_CODE_STYLE = {
   "--diffs-font-family": "'App Mono', monospace",
-  "--diffs-font-size": "14px",
-  "--diffs-line-height": "20px",
+  "--diffs-font-size": "13px",
+  "--diffs-line-height": "19px",
 } as React.CSSProperties;
 
 interface DiffCardBaseProps {
@@ -247,7 +240,7 @@ export const DiffCard = memo(
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full cursor-pointer items-center gap-2 border-b bg-muted/30 px-3 py-3 text-left"
+            className="flex w-full cursor-pointer items-center gap-2.5 border-b border-border/70 bg-muted/30 px-4 py-2.5 text-left"
           >
             <IconChevronDown
               className={cn(
@@ -264,31 +257,29 @@ export const DiffCard = memo(
               }}
               className="size-4"
             />
-            <span
-              className={cn(
-                "shrink-0 text-sm font-medium",
-                STATUS_COLORS[kind] ?? "text-foreground",
-              )}
-            >
-              {filename}
-            </span>
-            {dir && (
-              <span className="truncate text-xs text-muted-foreground">
-                {dir}
-              </span>
-            )}
-            <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-xs">
+            <div className="min-w-0 flex-1">
+              <p
+                className={cn(
+                  "truncate text-sm font-medium",
+                  FILE_STATUS[kind]?.color ?? "text-foreground",
+                )}
+              >
+                {filename}
+              </p>
+              {dir && <p className="truncate text-xs text-muted-foreground">{dir}</p>}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
               {additions > 0 && (
-                <span className="text-green-600 dark:text-green-400">
+                <span className={DIFF_ADDITION_COLOR}>
                   +{additions}
                 </span>
               )}
               {deletions > 0 && (
-                <span className="text-red-600 dark:text-red-400">
+                <span className={DIFF_DELETION_COLOR}>
                   -{deletions}
                 </span>
               )}
-            </span>
+            </div>
           </CollapsibleTrigger>
           <CollapsibleContent keepMounted>
             {contentProps.contentKind === "text" ? (

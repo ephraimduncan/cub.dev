@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
 
 interface CommitBarProps {
@@ -18,30 +19,37 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
   };
 
   return (
-    <div className="flex flex-col min-h-0 flex-1 max-h-[200px] border-t border-border">
-      <div className="relative flex-1 min-h-0">
-        <Textarea
-          placeholder="Enter commit message"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          className="absolute inset-0 resize-none text-xs p-3 border-0 focus-visible:ring-0 rounded-none bg-transparent"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              handleCommit();
-            }
-          }}
-        />
-        <div className="absolute bottom-2 right-2">
-          <Button
-            size="sm"
-            className="text-xs"
-            disabled={disabled}
-            onClick={handleCommit}
-          >
-            Commit
-          </Button>
-        </div>
+    <div className="space-y-2 border-t border-border/70 p-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">
+          Commit
+          {stagedCount > 0 && (
+            <span className="tabular-nums"> · {stagedCount} staged</span>
+          )}
+        </p>
+        <Kbd>⌘↵</Kbd>
+      </div>
+      <Textarea
+        placeholder="Commit message"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        className="min-h-20 resize-none border-border/50 bg-background text-sm shadow-none"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            handleCommit();
+          }
+        }}
+      />
+      <div className="flex justify-end">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={disabled}
+          onClick={handleCommit}
+        >
+          Commit
+        </Button>
       </div>
     </div>
   );

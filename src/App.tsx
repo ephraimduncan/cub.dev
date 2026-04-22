@@ -162,7 +162,7 @@ function App() {
 
   if (error) {
     return (
-      <main className="flex h-screen items-center justify-center p-4">
+      <main className="flex h-dvh items-center justify-center p-4">
         <p className="text-destructive text-sm">{error}</p>
       </main>
     );
@@ -170,7 +170,7 @@ function App() {
 
   if (!status) {
     return (
-      <main className="flex h-screen items-center justify-center">
+      <main className="flex h-dvh items-center justify-center">
         <p className="text-muted-foreground text-sm">Loading...</p>
       </main>
     );
@@ -178,7 +178,10 @@ function App() {
 
   return (
     <>
-      <ResizablePanelGroup orientation="horizontal" className="h-screen">
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="h-full isolate bg-background"
+      >
         <ResizablePanel defaultSize="22%" minSize="15%" maxSize="35%">
           <Sidebar
             workdir={workdir}

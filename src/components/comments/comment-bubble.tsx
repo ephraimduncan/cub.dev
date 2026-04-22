@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { IconX, IconEye, IconCheck, IconBan } from "@tabler/icons-react";
+import { cn } from "@/lib/utils";
 import type { ActionType, CommentStatus } from "@/types/comments";
 
 const ACTION_LABELS: Record<
@@ -20,17 +21,20 @@ const STATUS_CONFIG: Record<
   acknowledged: {
     label: "Agent reviewing…",
     icon: IconEye,
-    className: "bg-blue-500/10 text-blue-600 border-blue-200",
+    className:
+      "border-blue-500/15 bg-blue-500/10 text-blue-600 dark:border-blue-400/15 dark:bg-blue-400/10 dark:text-blue-300",
   },
   resolved: {
     label: "Resolved",
     icon: IconCheck,
-    className: "bg-green-500/10 text-green-600 border-green-200",
+    className:
+      "border-green-500/15 bg-green-500/10 text-green-600 dark:border-green-400/15 dark:bg-green-400/10 dark:text-green-300",
   },
   dismissed: {
     label: "Dismissed",
     icon: IconBan,
-    className: "bg-amber-500/10 text-amber-600 border-amber-200",
+    className:
+      "border-amber-500/15 bg-amber-500/10 text-amber-600 dark:border-amber-400/15 dark:bg-amber-400/10 dark:text-amber-300",
   },
 };
 
@@ -56,61 +60,58 @@ export function CommentBubble({
   const isTerminal = status === "resolved" || status === "dismissed";
 
   return (
-    <div style={{ overflow: "hidden", width: "100%" }}>
+    <div className="p-2">
       <div
-        style={{ whiteSpace: "normal", margin: 12 }}
-        className="max-w-[90%] sm:max-w-[70%]"
+        className={cn(
+          "rounded-md border border-border/50 bg-card p-2.5",
+          isTerminal && "opacity-50",
+        )}
       >
-        <div
-          className={`rounded-lg border bg-card p-3 shadow-sm ${
-            isTerminal ? "opacity-60" : ""
-          }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge variant={action.variant} className="text-[10px]">
-                  {action.label}
+        <div className="flex items-start justify-between gap-2">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant={action.variant}>
+                {action.label}
+              </Badge>
+              {statusCfg && (
+                <Badge
+                  variant="outline"
+                  className={cn("gap-1 pl-1 pr-2", statusCfg.className)}
+                >
+                  <statusCfg.icon className="size-3 shrink-0" />
+                  {statusCfg.label}
                 </Badge>
-                {statusCfg && (
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] gap-0.5 ${statusCfg.className}`}
-                  >
-                    <statusCfg.icon className="size-2.5" />
-                    {statusCfg.label}
-                  </Badge>
-                )}
-                {status === "pending" && (
-                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                    Submitted
-                  </Badge>
-                )}
-              </div>
-              <p className="text-xs leading-relaxed">{text}</p>
+              )}
+              {status === "pending" && (
+                <Badge variant="outline" className="text-muted-foreground">
+                  Submitted
+                </Badge>
+              )}
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm/5 text-pretty">{text}</p>
               {status === "resolved" && summary && (
-                <p className="text-[11px] leading-relaxed text-green-600 mt-1">
+                <p className="text-xs/5 text-green-600 dark:text-green-400">
                   {summary}
                 </p>
               )}
               {status === "dismissed" && dismissReason && (
-                <p className="text-[11px] leading-relaxed text-amber-600 mt-1">
+                <p className="text-xs/5 text-amber-600 dark:text-amber-400">
                   {dismissReason}
                 </p>
               )}
             </div>
-            {/* Only show delete button for draft comments (not yet submitted) */}
-            {status === "draft" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-6 shrink-0 p-0"
-                onClick={onDelete}
-              >
-                <IconX className="size-3" />
-              </Button>
-            )}
           </div>
+          {status === "draft" && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="size-5 shrink-0 p-0"
+              onClick={onDelete}
+            >
+              <IconX className="size-3" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

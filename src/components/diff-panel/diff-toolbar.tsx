@@ -1,13 +1,10 @@
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Separator } from "@/components/ui/separator";
 import {
-  IconLayoutColumns,
-  IconLayoutRows,
   IconFold,
   IconArrowsVertical,
   IconCheck,
+  IconLayoutColumns,
+  IconLayoutRows,
 } from "@tabler/icons-react";
 
 interface DiffToolbarProps {
@@ -39,9 +36,9 @@ function StatusSummary({
   if (resolved > 0) parts.push(`${resolved} resolved`);
   if (parts.length === 0) return null;
   return (
-    <span className="text-[11px] text-muted-foreground">
+    <p className="text-xs text-muted-foreground tabular-nums">
       {parts.join(" · ")}
-    </span>
+    </p>
   );
 }
 
@@ -59,32 +56,27 @@ export function DiffToolbar({
   submittingReview,
 }: DiffToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 flex h-10 items-center justify-between border-b bg-background px-3">
+    <div className="sticky top-0 z-10 flex h-10 items-center justify-between border-b border-border bg-background px-3">
       <StatusSummary
         pending={pendingCount}
         acknowledged={acknowledgedCount}
         resolved={resolvedCount}
       />
-      <div className="flex items-center gap-1.5">
+      <div className="ml-auto flex items-center gap-1.5">
         {resolvedCount > 0 && (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-              onClick={onClearResolved}
-              title="Clear resolved comments"
-            >
-              <IconCheck className="size-3" />
-              Clear Resolved
-            </Button>
-            <Separator orientation="vertical" className="h-4" />
-          </>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            onClick={onClearResolved}
+            title="Clear resolved"
+          >
+            <IconCheck className="size-3.5" />
+          </Button>
         )}
         <Button
           variant="ghost"
-          size="sm"
-          className="h-7 px-1.5"
+          size="icon-sm"
           onClick={onToggleExpandAll}
           title={allExpanded ? "Collapse All" : "Expand All"}
         >
@@ -94,44 +86,31 @@ export function DiffToolbar({
             <IconArrowsVertical className="size-3.5" />
           )}
         </Button>
-        <Separator orientation="vertical" className="h-4" />
-        <ToggleGroup
-          value={[diffStyle]}
-          onValueChange={(values) => {
-            const next = values.find((v) => v !== diffStyle);
-            if (next) onDiffStyleChange(next as "unified" | "split");
-          }}
-          size="sm"
-          variant="outline"
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() =>
+            onDiffStyleChange(diffStyle === "split" ? "unified" : "split")
+          }
+          title={diffStyle === "split" ? "Switch to unified" : "Switch to split"}
         >
-          <ToggleGroupItem
-            value="unified"
-            title="Unified view"
-            className="h-7 px-1.5"
-          >
-            <IconLayoutRows className="size-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="split"
-            title="Split view"
-            className="h-7 px-1.5"
-          >
+          {diffStyle === "split" ? (
             <IconLayoutColumns className="size-3.5" />
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <Separator orientation="vertical" className="h-4" />
+          ) : (
+            <IconLayoutRows className="size-3.5" />
+          )}
+        </Button>
         <Button
           size="sm"
-          className="text-xs h-7"
           disabled={commentCount === 0 || submittingReview}
           onClick={onSubmitReview}
+          className="tabular-nums"
         >
-          {submittingReview ? "Submitting…" : "Submit Review"}
-          {commentCount > 0 && (
-            <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">
-              {commentCount}
-            </Badge>
-          )}
+          {submittingReview
+            ? "Submitting…"
+            : commentCount > 0
+              ? `Submit (${commentCount})`
+              : "Submit Review"}
         </Button>
       </div>
     </div>

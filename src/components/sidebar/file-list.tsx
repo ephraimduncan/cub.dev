@@ -33,34 +33,24 @@ export function FileList({
 
   return (
     <Collapsible defaultOpen>
-      <div className="flex items-center justify-between px-1.5 py-1">
-        <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+      <div className="flex items-center justify-between px-2 py-1">
+        <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
           <IconChevronDown className="size-3 transition-transform -rotate-90 [[data-panel-open]_&]:rotate-0" />
           {label}
-          <span className="text-[10px]">({files.length})</span>
+          <span className="tabular-nums opacity-50">{files.length}</span>
         </CollapsibleTrigger>
-        {onStageAll && (
+        {(onStageAll || onUnstageAll) && (
           <Button
             variant="ghost"
-            size="sm"
-            className="h-5 px-1.5 text-[10px]"
-            onClick={onStageAll}
+            size="xs"
+            className="text-xs text-muted-foreground"
+            onClick={onStageAll ?? onUnstageAll}
           >
-            Stage All
-          </Button>
-        )}
-        {onUnstageAll && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-5 px-1.5 text-[10px]"
-            onClick={onUnstageAll}
-          >
-            Unstage All
+            {onStageAll ? "Stage all" : "Unstage all"}
           </Button>
         )}
       </div>
-      <CollapsibleContent>
+      <CollapsibleContent className="space-y-0.5">
         {files.map((file) => (
           <FileRow
             key={file.path}
