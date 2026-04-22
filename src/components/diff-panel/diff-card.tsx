@@ -226,6 +226,8 @@ export const DiffCard = memo(
       [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm],
     );
 
+    const textFileDiff =
+      contentProps.contentKind === "text" ? contentProps.fileDiff : null;
     const binaryMessage =
       contentProps.contentKind === "binary"
         ? getBinaryDiffMessage(
@@ -234,6 +236,34 @@ export const DiffCard = memo(
             contentProps.newBinary,
           )
         : null;
+    const content = useMemo(
+      () =>
+        contentProps.contentKind === "text" ? (
+          <PierreFileDiff<CommentMetadata>
+            fileDiff={textFileDiff!}
+            className="min-w-0 overflow-hidden"
+            style={DIFF_CODE_STYLE}
+            options={fileDiffOptions}
+            lineAnnotations={annotations}
+            selectedLines={selectedLines}
+            renderAnnotation={renderAnnotation}
+            disableWorkerPool
+          />
+        ) : (
+          <div className="px-4 py-6 text-sm text-muted-foreground">
+            <p>{binaryMessage}</p>
+          </div>
+        ),
+      [
+        annotations,
+        binaryMessage,
+        contentProps.contentKind,
+        fileDiffOptions,
+        renderAnnotation,
+        selectedLines,
+        textFileDiff,
+      ],
+    );
 
     return (
       <div ref={ref} className="min-w-0 w-full overflow-clip">
@@ -281,24 +311,7 @@ export const DiffCard = memo(
               )}
             </div>
           </CollapsibleTrigger>
-          <CollapsibleContent keepMounted>
-            {contentProps.contentKind === "text" ? (
-              <PierreFileDiff<CommentMetadata>
-                fileDiff={contentProps.fileDiff}
-                className="min-w-0 overflow-hidden"
-                style={DIFF_CODE_STYLE}
-                options={fileDiffOptions}
-                lineAnnotations={annotations}
-                selectedLines={selectedLines}
-                renderAnnotation={renderAnnotation}
-                disableWorkerPool
-              />
-            ) : (
-              <div className="px-4 py-6 text-sm text-muted-foreground">
-                <p>{binaryMessage}</p>
-              </div>
-            )}
-          </CollapsibleContent>
+          <CollapsibleContent keepMounted>{content}</CollapsibleContent>
         </Collapsible>
       </div>
     );

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getFileContents,
   type FileContentsResponse,
@@ -24,26 +24,56 @@ interface UseDiffsReturn {
   loading: boolean;
 }
 
-function getUniquePaths(staged: FileEntry[], unstaged: FileEntry[]): string[] {
-  const paths = new Set<string>();
-  for (const f of staged) paths.add(f.path);
-  for (const f of unstaged) paths.add(f.path);
-  return Array.from(paths);
-}
-
 export function useDiffs(
   staged: FileEntry[] | undefined,
   unstaged: FileEntry[] | undefined,
 ): UseDiffsReturn {
   const [diffs, setDiffs] = useState<Map<string, FileDiffContents>>(new Map());
   const [loading, setLoading] = useState(false);
+  const diffsRef = useRef(diffs);
+  diffsRef.current = diffs;
+
+  const pathsKey = useMemo(() => {
+    if (!staged || !unstaged) return null;
+    const set = new Set<string>();
+    for (const f of staged) set.add(f.path);
+    for (const f of unstaged) set.add(f.path);
+    return Array.from(set).sort().join("\0");
+  }, [staged, unstaged]);
 
   useEffect(() => {
-    if (!staged || !unstaged) return;
+    if (pathsKey == null) return;
 
-    const paths = getUniquePaths(staged, unstaged);
-    if (paths.length === 0) {
-      setDiffs(new Map());
+    if (pathsKey === "") {
+      if (diffsRef.current.size > 0) setDiffs(new Map());
+      setLoading(false);
+      return;
+    }
+
+    const paths = pathsKey.split("\0");
+    const pathSet = new Set(paths);
+    const current = diffsRef.current;
+    const missing = paths.filter((p) => !current.has(p));
+
+    // Prune entries for paths no longer present.
+    let needsPrune = current.size !== paths.length;
+    if (!needsPrune) {
+      for (const p of current.keys()) {
+        if (!pathSet.has(p)) {
+          needsPrune = true;
+          break;
+        }
+      }
+    }
+    if (needsPrune) {
+      const pruned = new Map<string, FileDiffContents>();
+      for (const [p, v] of current) {
+        if (pathSet.has(p)) pruned.set(p, v);
+      }
+      setDiffs(pruned);
+    }
+
+    if (missing.length === 0) {
       setLoading(false);
       return;
     }
@@ -53,36 +83,34 @@ export function useDiffs(
     setLoading(true);
 
     void Promise.allSettled(
-      paths.map(async (path) => {
-        // TODO: pass staged=true for staged-only files when UI supports separate staged/unstaged diff views
+      missing.map(async (path) => {
         const resp = await getFileContents(path);
         return [path, resp] as const;
       }),
     )
       .then((results) => {
         if (cancelled) return;
-
-        const map = new Map<string, FileDiffContents>();
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            const [path, resp] = result.value;
-            map.set(path, toFileDiffContents(resp));
-          } else {
-            console.warn("[cub] failed to fetch diff:", result.reason);
+        setDiffs((prev) => {
+          const next = new Map(prev);
+          for (const result of results) {
+            if (result.status === "fulfilled") {
+              const [path, resp] = result.value;
+              next.set(path, toFileDiffContents(resp));
+            } else {
+              console.warn("[cub] failed to fetch diff:", result.reason);
+            }
           }
-        }
-        setDiffs(map);
+          return next;
+        });
       })
       .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [staged, unstaged]);
+  }, [pathsKey]);
 
   return { diffs, loading };
 }

@@ -119,27 +119,51 @@ export function DiffPanel({
   submittingReview,
 }: DiffPanelProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const refCallbacks = useRef<
+    Map<string, (el: HTMLDivElement | null) => void>
+  >(new Map());
 
   const unstagedPaths = useMemo(
     () => new Set(unstaged.map((f) => f.path)),
     [unstaged],
   );
 
-  const setCardRef = useCallback(
-    (path: string) => (el: HTMLDivElement | null) => {
+  const getCardRef = useCallback((path: string) => {
+    const existing = refCallbacks.current.get(path);
+    if (existing) return existing;
+    const callback = (el: HTMLDivElement | null) => {
       if (el) {
         cardRefs.current.set(path, el);
       } else {
         cardRefs.current.delete(path);
       }
-    },
-    [],
-  );
+    };
+    refCallbacks.current.set(path, callback);
+    return callback;
+  }, []);
 
-  // Parse full file contents into FileDiffMetadata with isPartial=false,
-  // enabling hunk expansion and custom hunk separators.
+  const lastScrolledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!scrollToPath) return;
+    if (scrollToPath === lastScrolledRef.current) {
+      onScrollComplete();
+      return;
+    }
+    lastScrolledRef.current = scrollToPath;
+    const el = cardRefs.current.get(scrollToPath);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    onScrollComplete();
+  }, [scrollToPath, onScrollComplete]);
+
+  const parseCacheRef = useRef<
+    WeakMap<FileDiffContents, FileDiffMetadata>
+  >(new WeakMap());
+
   const parsedFiles = useMemo(() => {
     const result: ParsedFile[] = [];
+    const cache = parseCacheRef.current;
     for (const file of files) {
       const contents = diffs.get(file.path);
       if (!contents) continue;
@@ -157,10 +181,16 @@ export function DiffPanel({
         continue;
       }
 
+      let fileDiff = cache.get(contents);
+      if (!fileDiff) {
+        fileDiff = parseDiffFromFile(contents.oldFile, contents.newFile);
+        cache.set(contents, fileDiff);
+      }
+
       result.push({
         contentKind: "text",
         filePath: file.path,
-        fileDiff: parseDiffFromFile(contents.oldFile, contents.newFile),
+        fileDiff,
         additions: file.additions,
         deletions: file.deletions,
         kind: file.kind,
@@ -168,15 +198,6 @@ export function DiffPanel({
     }
     return result;
   }, [files, diffs]);
-
-  useEffect(() => {
-    if (!scrollToPath) return;
-    const el = cardRefs.current.get(scrollToPath);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      onScrollComplete();
-    }
-  }, [scrollToPath, onScrollComplete, parsedFiles]);
 
   if (loading) {
     return (
@@ -212,7 +233,7 @@ export function DiffPanel({
           parsedFiles.map((parsedFile) => (
             <DiffCard
               key={parsedFile.filePath}
-              ref={setCardRef(parsedFile.filePath)}
+              ref={getCardRef(parsedFile.filePath)}
               filePath={parsedFile.filePath}
               additions={parsedFile.additions}
               deletions={parsedFile.deletions}
