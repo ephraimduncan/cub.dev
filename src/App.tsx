@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -16,12 +16,15 @@ import { toast } from "sonner";
 
 function App() {
   const { workdir, status, error, refresh } = useRepoStatus();
-  const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
+  const { diffs } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
   const [allExpanded, setAllExpanded] = useState(true);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [optimisticStage, setOptimisticStage] = useState<Map<string, boolean>>(
+    new Map(),
+  );
 
   useFileWatcher(
     useCallback(() => {
@@ -31,10 +34,38 @@ function App() {
     }, [comments.totalCommentCount, refresh]),
   );
 
-  const stagedPaths = useMemo(() => {
-    if (!status) return new Set<string>();
-    return new Set(status.staged.map((f) => f.path));
-  }, [status]);
+  // Apply optimistic stage toggles to the raw staged/unstaged lists so the
+  // sidebar sections reshuffle instantly without waiting for the backend.
+  const { stagedView, unstagedView } = useMemo(() => {
+    if (!status) return { stagedView: [] as FileEntry[], unstagedView: [] as FileEntry[] };
+    if (optimisticStage.size === 0) {
+      return { stagedView: status.staged, unstagedView: status.unstaged };
+    }
+    const stagedByPath = new Map(status.staged.map((f) => [f.path, f]));
+    const unstagedByPath = new Map(status.unstaged.map((f) => [f.path, f]));
+    const nextStaged = new Map(stagedByPath);
+    const nextUnstaged = new Map(unstagedByPath);
+    optimisticStage.forEach((wantStaged, path) => {
+      const source = stagedByPath.get(path) ?? unstagedByPath.get(path);
+      if (!source) return;
+      if (wantStaged) {
+        nextStaged.set(path, source);
+        nextUnstaged.delete(path);
+      } else {
+        nextUnstaged.set(path, source);
+        nextStaged.delete(path);
+      }
+    });
+    return {
+      stagedView: Array.from(nextStaged.values()),
+      unstagedView: Array.from(nextUnstaged.values()),
+    };
+  }, [status, optimisticStage]);
+
+  const stagedPaths = useMemo(
+    () => new Set(stagedView.map((f) => f.path)),
+    [stagedView],
+  );
 
   const allFiles = useMemo((): FileEntry[] => {
     if (!status) return [];
@@ -63,30 +94,63 @@ function App() {
     setScrollToPath(null);
   }, []);
 
+  const stagedPathsRef = useRef(stagedPaths);
+  stagedPathsRef.current = stagedPaths;
+
   const handleToggleStage = useCallback(
     async (path: string) => {
+      const willStage = !stagedPathsRef.current.has(path);
+      setOptimisticStage((prev) => {
+        const next = new Map(prev);
+        next.set(path, willStage);
+        return next;
+      });
       try {
-        if (stagedPaths.has(path)) {
-          await unstageFile(path);
-        } else {
+        if (willStage) {
           await stageFile(path);
+        } else {
+          await unstageFile(path);
         }
         await refresh();
       } catch (e) {
         toast.error(`Stage failed: ${e}`);
+      } finally {
+        setOptimisticStage((prev) => {
+          if (!prev.has(path)) return prev;
+          const next = new Map(prev);
+          next.delete(path);
+          return next;
+        });
       }
     },
-    [stagedPaths, refresh],
+    [refresh],
   );
 
   const handleStageAll = useCallback(async () => {
+    const paths = unstagedView.map((f) => f.path);
+    if (paths.length === 0) return;
+    setOptimisticStage((prev) => {
+      const next = new Map(prev);
+      for (const path of paths) next.set(path, true);
+      return next;
+    });
+
     try {
       await stageAll();
       await refresh();
     } catch (e) {
       toast.error(`Stage all failed: ${e}`);
+    } finally {
+      setOptimisticStage((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const path of paths) {
+          changed = next.delete(path) || changed;
+        }
+        return changed ? next : prev;
+      });
     }
-  }, [refresh]);
+  }, [refresh, unstagedView]);
 
   const handleUnstageAll = useCallback(async () => {
     try {
@@ -161,8 +225,8 @@ function App() {
         <ResizablePanel defaultSize="22%" minSize="15%" maxSize="35%">
           <Sidebar
             workdir={workdir}
-            staged={status.staged}
-            unstaged={status.unstaged}
+            staged={stagedView}
+            unstaged={unstagedView}
             stagedPaths={stagedPaths}
             selectedFile={scrollToPath}
             onSelectFile={handleSelectFile}
@@ -178,9 +242,8 @@ function App() {
           <DiffPanel
             files={allFiles}
             diffs={diffs}
-            loading={loading}
             stagedPaths={stagedPaths}
-            unstaged={status.unstaged}
+            unstaged={unstagedView}
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}

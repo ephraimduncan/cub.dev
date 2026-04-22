@@ -334,7 +334,9 @@ fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {
 }
 
 fn unstage_path(repo: &Repository, path: &str) -> Result<(), String> {
-    match repo.revparse_single("HEAD") {
+    let head_result = repo.revparse_single("HEAD");
+
+    match head_result {
         Ok(head_obj) => {
             repo.reset_default(Some(&head_obj), [path])
                 .map_err(|e| format!("failed to unstage file: {e}"))?;
@@ -397,16 +399,55 @@ pub fn stage_all(state: State<AppState>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
-    for path in collect_paths(
+    let paths = collect_paths(
         repo,
         Status::WT_NEW
             | Status::WT_MODIFIED
             | Status::WT_DELETED
             | Status::WT_RENAMED
             | Status::WT_TYPECHANGE,
-    )? {
-        stage_path(repo, &path)?;
+    )?;
+
+    let workdir = repo.workdir().ok_or("bare repository")?;
+
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("failed to get index: {e}"))?;
+
+    for path in &paths {
+        let repo_path = Path::new(path);
+        let exists_in_workdir = workdir.join(repo_path).exists();
+
+        if exists_in_workdir {
+            index
+                .add_path(repo_path)
+                .map_err(|e| format!("failed to stage file: {e}"))?;
+        } else {
+            let status = match repo.status_file(repo_path) {
+                Ok(status) => status,
+                Err(_) => continue,
+            };
+
+            if !status.intersects(
+                Status::WT_DELETED
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE,
+            ) {
+                continue;
+            }
+
+            index
+                .remove_path(repo_path)
+                .map_err(|e| format!("failed to stage file: {e}"))?;
+        }
     }
+
+    index
+        .write()
+        .map_err(|e| format!("failed to write index: {e}"))?;
 
     Ok(())
 }
