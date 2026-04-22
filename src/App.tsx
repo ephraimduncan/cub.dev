@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -13,6 +13,16 @@ import { useComments } from "@/hooks/use-comments";
 import { useFileWatcher } from "@/hooks/use-file-watcher";
 import { stageFile, unstageFile, stageAll, unstageAll, commit, submitReview, type FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
+import type { CommentStatus } from "@/types/comments";
+
+interface CommentStatusPayload {
+  review_id: string;
+  comment_id: string;
+  status: CommentStatus;
+  summary: string | null;
+  dismiss_reason: string | null;
+}
 
 function App() {
   const { workdir, status, error, refresh } = useRepoStatus();
@@ -22,6 +32,22 @@ function App() {
   const [allExpanded, setAllExpanded] = useState(true);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
+
+  // Listen for real-time comment status updates from the Tauri event bridge
+  const { updateCommentStatus } = comments;
+  useEffect(() => {
+    const promise = listen<CommentStatusPayload>("review:comment-updated", (event) => {
+      updateCommentStatus(
+        event.payload.comment_id,
+        event.payload.status,
+        event.payload.summary,
+        event.payload.dismiss_reason,
+      );
+    });
+    return () => {
+      promise.then((unlisten) => unlisten());
+    };
+  }, [updateCommentStatus]);
 
   useFileWatcher(
     useCallback(() => {
@@ -110,38 +136,33 @@ function App() {
     [refresh],
   );
 
-  const handleCommitAndPush = useCallback(
-    async (message: string) => {
-      try {
-        const oid = await commit(message);
-        toast.success(`Committed: ${oid.slice(0, 7)}. Push not yet implemented.`);
-        await refresh();
-      } catch (e) {
-        toast.error(`Commit failed: ${e}`);
-      }
-    },
-    [refresh],
-  );
+  const { collectAllComments, markSubmitted } = comments;
+  const submittingRef = useRef(false);
 
   const handleSubmitReview = useCallback(async () => {
-    const reviewComments = comments.collectAllComments();
-    if (reviewComments.length === 0 || submittingReview) return;
+    if (submittingRef.current) return;
+    const reviewComments = collectAllComments();
+    if (reviewComments.length === 0) return;
 
+    submittingRef.current = true;
     setSubmittingReview(true);
     try {
       const result = await submitReview(reviewComments);
       toast.success(`Submitted ${result.submitted_count} comment(s)`);
-      comments.clearAll();
+      // Map server IDs back to local annotations by key
+      const idMap = new Map(result.comment_ids.map((m) => [m.key, m.id]));
+      markSubmitted(idMap);
     } catch (e) {
       toast.error(`Review submit failed: ${e}`);
     } finally {
+      submittingRef.current = false;
       setSubmittingReview(false);
     }
-  }, [comments, submittingReview]);
+  }, [collectAllComments, markSubmitted]);
 
   if (error) {
     return (
-      <main className="flex h-screen items-center justify-center p-4">
+      <main className="flex h-dvh items-center justify-center p-4">
         <p className="text-destructive text-sm">{error}</p>
       </main>
     );
@@ -149,7 +170,7 @@ function App() {
 
   if (!status) {
     return (
-      <main className="flex h-screen items-center justify-center">
+      <main className="flex h-dvh items-center justify-center">
         <p className="text-muted-foreground text-sm">Loading...</p>
       </main>
     );
@@ -157,7 +178,10 @@ function App() {
 
   return (
     <>
-      <ResizablePanelGroup orientation="horizontal" className="h-screen">
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="h-full isolate bg-background"
+      >
         <ResizablePanel defaultSize="22%" minSize="15%" maxSize="35%">
           <Sidebar
             workdir={workdir}
@@ -170,7 +194,6 @@ function App() {
             onStageAll={handleStageAll}
             onUnstageAll={handleUnstageAll}
             onCommit={handleCommit}
-            onCommitAndPush={handleCommitAndPush}
           />
         </ResizablePanel>
         <ResizableHandle />
@@ -190,12 +213,16 @@ function App() {
             annotationsByFile={comments.annotationsByFile}
             hasOpenForm={comments.hasOpenForm}
             totalCommentCount={comments.totalCommentCount}
+            pendingCount={comments.pendingCount}
+            acknowledgedCount={comments.acknowledgedCount}
+            resolvedCount={comments.resolvedCount}
             onAddAnnotation={comments.addFormAnnotation}
             onCancelAnnotation={comments.cancelAnnotation}
             onSubmitAnnotation={comments.submitAnnotation}
             onDeleteAnnotation={comments.deleteAnnotation}
             onToggleStage={handleToggleStage}
             onSubmitReview={handleSubmitReview}
+            onClearResolved={comments.clearResolved}
             submittingReview={submittingReview}
           />
         </ResizablePanel>

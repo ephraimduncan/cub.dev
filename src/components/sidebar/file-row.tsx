@@ -1,14 +1,7 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { FILE_STATUS, DIFF_ADDITION_COLOR, DIFF_DELETION_COLOR } from "@/lib/status";
 import type { FileEntry } from "@/lib/tauri";
-
-const STATUS_LABELS: Record<string, { letter: string; className: string }> = {
-  added: { letter: "A", className: "text-emerald-500" },
-  modified: { letter: "M", className: "text-amber-500" },
-  deleted: { letter: "D", className: "text-red-500" },
-  renamed: { letter: "R", className: "text-blue-500" },
-  typechange: { letter: "T", className: "text-purple-500" },
-};
 
 interface FileRowProps {
   file: FileEntry;
@@ -25,9 +18,9 @@ export function FileRow({
   onSelect,
   onToggleStage,
 }: FileRowProps) {
-  const status = STATUS_LABELS[file.kind] ?? {
+  const status = FILE_STATUS[file.kind] ?? {
     letter: "?",
-    className: "text-muted-foreground",
+    color: "text-muted-foreground",
   };
   const parts = file.path.split("/");
   const filename = parts.pop() ?? file.path;
@@ -35,42 +28,52 @@ export function FileRow({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={cn(
-        "group flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs cursor-pointer min-w-0",
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
+        "group flex min-w-0 items-start gap-2 rounded-sm px-2 py-1 text-sm cursor-pointer",
+        isSelected
+          ? "bg-accent text-accent-foreground"
+          : "text-foreground hover:bg-muted/70",
       )}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
     >
-      <span
+      <div
         className={cn(
-          "shrink-0 font-mono text-[10px] font-bold",
-          status.className,
+          "flex h-5 shrink-0 items-center font-mono text-xs font-semibold tabular-nums",
+          status.color,
         )}
       >
         {status.letter}
-      </span>
-      <span className="shrink-0 font-medium">{filename}</span>
-      {dir && (
-        <span className="truncate text-muted-foreground text-[10px]">
-          {dir}
-        </span>
-      )}
-      <span className="ml-auto flex shrink-0 gap-1 font-mono text-[10px]">
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">{filename}</p>
+        {dir && <p className="truncate text-xs text-muted-foreground">{dir}</p>}
+      </div>
+      <div className="flex h-5 shrink-0 items-center gap-1.5 text-xs tabular-nums">
         {file.additions > 0 && (
-          <span className="text-emerald-500">+{file.additions}</span>
+          <span className={DIFF_ADDITION_COLOR}>+{file.additions}</span>
         )}
         {file.deletions > 0 && (
-          <span className="text-red-500">-{file.deletions}</span>
+          <span className={DIFF_DELETION_COLOR}>-{file.deletions}</span>
         )}
-      </span>
-      <Checkbox
-        checked={isStaged}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleStage();
-        }}
-        className="size-3.5"
-      />
+      </div>
+      <div className="flex h-5 shrink-0 items-center">
+        <Checkbox
+          checked={isStaged}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStage();
+          }}
+          className="size-4"
+        />
+      </div>
     </div>
   );
 }
