@@ -1,10 +1,13 @@
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::git::AppState;
 
@@ -21,6 +24,7 @@ pub enum ActionType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewComment {
+    pub key: String,
     pub file_path: String,
     pub line_start: u32,
     pub line_end: u32,
@@ -28,14 +32,31 @@ pub struct ReviewComment {
     pub action_type: ActionType,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentIdMapping {
+    pub key: String,
+    pub id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SubmitReviewResponse {
     pub submitted_count: usize,
+    pub comment_ids: Vec<CommentIdMapping>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ServerInfo {
     port: u16,
+}
+
+/// SSE event payload pushed from HTTP server → Tauri frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentStatusChanged {
+    pub review_id: String,
+    pub comment_id: String,
+    pub status: String,
+    pub summary: Option<String>,
+    pub dismiss_reason: Option<String>,
 }
 
 fn state_dir() -> Result<PathBuf, String> {
@@ -50,6 +71,7 @@ fn server_info_path() -> Result<PathBuf, String> {
     Ok(state_dir()?.join(SERVER_INFO_FILENAME))
 }
 
+#[cfg(debug_assertions)]
 fn workspace_root() -> Result<PathBuf, String> {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -57,13 +79,26 @@ fn workspace_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "failed to resolve workspace root".to_string())
 }
 
+#[cfg(not(debug_assertions))]
+fn workspace_root() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve executable path: {e}"))?;
+    exe.parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "failed to resolve workspace root from executable".to_string())
+}
+
 fn sidecar_script_path() -> Result<PathBuf, String> {
-    let path = workspace_root()?.join("sidecar").join("cub-mcp.js");
+    let root = workspace_root()?;
+    let path = root.join("sidecar").join("cub-mcp.js");
     if path.exists() {
-        Ok(path)
-    } else {
-        Err(format!("missing sidecar script at {}", path.display()))
+        return Ok(path);
     }
+    let flat = root.join("cub-mcp.js");
+    if flat.exists() {
+        return Ok(flat);
+    }
+    Err(format!("missing sidecar script (checked {} and {})", path.display(), flat.display()))
 }
 
 fn read_server_info() -> Result<Option<ServerInfo>, String> {
@@ -81,8 +116,16 @@ fn server_base_url(info: &ServerInfo) -> String {
     format!("http://127.0.0.1:{}", info.port)
 }
 
+fn http_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
 fn server_is_healthy(info: &ServerInfo) -> bool {
-    ureq::get(&format!("{}/health", server_base_url(info)))
+    http_agent()
+        .get(&format!("{}/health", server_base_url(info)))
         .call()
         .is_ok()
 }
@@ -156,8 +199,81 @@ fn ensure_server_running(state: &AppState) -> Result<ServerInfo, String> {
     Ok(info)
 }
 
-pub fn start_review_server(state: &AppState) -> Result<(), String> {
-    ensure_server_running(state).map(|_| ())
+pub fn start_review_server(state: &AppState) -> Result<u16, String> {
+    let info = ensure_server_running(state)?;
+    Ok(info.port)
+}
+
+/// Spawn a background thread that connects to the HTTP server's SSE endpoint
+/// and relays `comment_status_changed` events as Tauri events.
+pub fn start_event_listener(
+    app_handle: AppHandle,
+    port: u16,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let url = format!("http://127.0.0.1:{port}/events");
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+
+            // Build a fresh agent with no global timeout — SSE is long-lived
+            let agent = {
+                let config = ureq::Agent::config_builder()
+                    .timeout_global(None)
+                    .build();
+                ureq::Agent::new_with_config(config)
+            };
+
+            let response = match agent.get(&url).call() {
+                Ok(resp) => resp,
+                Err(_) => {
+                    // Server not ready yet or connection dropped; retry after delay
+                    if stop.load(Ordering::Relaxed) { return; }
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+            };
+
+            let reader = response.into_body().into_reader();
+            let buf = BufReader::new(reader);
+
+            let mut event_name = String::new();
+            let mut data_buf = String::new();
+
+            for line_result in buf.lines() {
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                let line = match line_result {
+                    Ok(l) => l,
+                    Err(_) => break, // connection dropped, reconnect
+                };
+
+                if line.starts_with("event: ") {
+                    event_name = line[7..].to_string();
+                } else if line.starts_with("data: ") {
+                    data_buf.push_str(&line[6..]);
+                } else if line.is_empty() {
+                    // End of SSE message — dispatch if we have data
+                    if event_name == "comment_status_changed" && !data_buf.is_empty() {
+                        if let Ok(payload) = serde_json::from_str::<CommentStatusChanged>(&data_buf) {
+                            let _ = app_handle.emit("review:comment-updated", &payload);
+                        }
+                    }
+                    event_name.clear();
+                    data_buf.clear();
+                }
+                // Lines starting with ':' are SSE comments (keep-alive), ignore
+            }
+
+            // If we reach here the connection was lost; reconnect after a delay
+            if stop.load(Ordering::Relaxed) { return; }
+            thread::sleep(Duration::from_secs(1));
+        }
+    })
 }
 
 fn validate_comments(comments: &[ReviewComment]) -> Result<(), String> {
@@ -189,6 +305,8 @@ struct SubmitResponse {
     #[serde(default)]
     accepted_count: Option<usize>,
     #[serde(default)]
+    comment_ids: Option<Vec<CommentIdMapping>>,
+    #[serde(default)]
     error: Option<String>,
 }
 
@@ -202,7 +320,8 @@ pub fn submit_review(
     let info = ensure_server_running(state.inner())?;
     let url = format!("{}/reviews", server_base_url(&info));
 
-    let response: SubmitResponse = ureq::post(&url)
+    let response: SubmitResponse = http_agent()
+        .post(&url)
         .header("Content-Type", "application/json")
         .send_json(&serde_json::json!({ "comments": comments }))
         .map_err(|e| format!("failed to submit review: {e}"))?
@@ -219,5 +338,7 @@ pub fn submit_review(
         .accepted_count
         .ok_or_else(|| "server omitted accepted_count".to_string())?;
 
-    Ok(SubmitReviewResponse { submitted_count })
+    let comment_ids = response.comment_ids.unwrap_or_default();
+
+    Ok(SubmitReviewResponse { submitted_count, comment_ids })
 }

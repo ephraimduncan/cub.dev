@@ -14,6 +14,7 @@ import type { ActionType, CommentMetadata } from "@/types/comments";
 interface DiffPanelProps {
   files: FileEntry[];
   diffs: Map<string, FileDiffContents>;
+  loading: boolean;
   stagedPaths: Set<string>;
   unstaged: FileEntry[];
   diffStyle: "unified" | "split";
@@ -25,6 +26,9 @@ interface DiffPanelProps {
   annotationsByFile: Map<string, DiffLineAnnotation<CommentMetadata>[]>;
   hasOpenForm: boolean;
   totalCommentCount: number;
+  pendingCount: number;
+  acknowledgedCount: number;
+  resolvedCount: number;
   onAddAnnotation: (
     filePath: string,
     side: AnnotationSide,
@@ -50,16 +54,17 @@ interface DiffPanelProps {
   ) => void;
   onToggleStage: (path: string) => void;
   onSubmitReview: () => void;
+  onClearResolved: () => void;
   submittingReview: boolean;
 }
 
 function getStageState(
   path: string,
   stagedPaths: Set<string>,
-  unstaged: FileEntry[],
+  unstagedPaths: Set<string>,
 ): "staged" | "unstaged" | "partial" {
   const isStaged = stagedPaths.has(path);
-  const isUnstaged = unstaged.some((f) => f.path === path);
+  const isUnstaged = unstagedPaths.has(path);
   if (isStaged && isUnstaged) return "partial";
   if (isStaged) return "staged";
   return "unstaged";
@@ -89,6 +94,7 @@ type ParsedFile =
 export function DiffPanel({
   files,
   diffs,
+  loading,
   stagedPaths,
   unstaged,
   diffStyle,
@@ -100,18 +106,27 @@ export function DiffPanel({
   annotationsByFile,
   hasOpenForm,
   totalCommentCount,
+  pendingCount,
+  acknowledgedCount,
+  resolvedCount,
   onAddAnnotation,
   onCancelAnnotation,
   onSubmitAnnotation,
   onDeleteAnnotation,
   onToggleStage,
   onSubmitReview,
+  onClearResolved,
   submittingReview,
 }: DiffPanelProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const refCallbacks = useRef<
     Map<string, (el: HTMLDivElement | null) => void>
   >(new Map());
+
+  const unstagedPaths = useMemo(
+    () => new Set(unstaged.map((f) => f.path)),
+    [unstaged],
+  );
 
   const getCardRef = useCallback((path: string) => {
     const existing = refCallbacks.current.get(path);
@@ -142,9 +157,6 @@ export function DiffPanel({
     onScrollComplete();
   }, [scrollToPath, onScrollComplete]);
 
-  // Cache parsed FileDiffMetadata keyed by the FileDiffContents reference.
-  // `useDiffs` preserves those references across status refreshes, so stage/
-  // unstage toggles hit the cache and avoid re-parsing every file.
   const parseCacheRef = useRef<
     WeakMap<FileDiffContents, FileDiffMetadata>
   >(new WeakMap());
@@ -187,20 +199,32 @@ export function DiffPanel({
     return result;
   }, [files, diffs]);
 
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading diffs...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
       <DiffToolbar
         diffStyle={diffStyle}
         onDiffStyleChange={onDiffStyleChange}
         allExpanded={allExpanded}
         onToggleExpandAll={onToggleExpandAll}
         commentCount={totalCommentCount}
+        pendingCount={pendingCount}
+        acknowledgedCount={acknowledgedCount}
+        resolvedCount={resolvedCount}
         onSubmitReview={onSubmitReview}
+        onClearResolved={onClearResolved}
         submittingReview={submittingReview}
       />
       <div className="min-h-0 flex-1 overflow-auto">
         {parsedFiles.length === 0 ? (
-          <div className="flex h-full items-center justify-center py-20">
+          <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No changes to review
             </p>
@@ -217,7 +241,7 @@ export function DiffPanel({
               stageState={getStageState(
                 parsedFile.filePath,
                 stagedPaths,
-                unstaged,
+                unstagedPaths,
               )}
               diffStyle={diffStyle}
               expanded={allExpanded}

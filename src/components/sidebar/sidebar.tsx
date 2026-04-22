@@ -22,7 +22,6 @@ interface SidebarProps {
   onStageAll: () => void;
   onUnstageAll: () => void;
   onCommit: (message: string) => void;
-  onCommitAndPush: (message: string) => void;
 }
 
 const treeStyle: CSSProperties = {
@@ -62,16 +61,19 @@ export function Sidebar({
   onStageAll,
   onUnstageAll,
   onCommit,
-  onCommitAndPush,
 }: SidebarProps) {
   const hasChanges = staged.length > 0 || unstaged.length > 0;
+  const totalCount = staged.length + unstaged.length;
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
-      <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
-        <h2 className="truncate text-xs font-medium text-muted-foreground">
-          {workdir ?? "Repository"}
-        </h2>
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border/70 bg-sidebar">
+      <div className="flex h-10 items-center justify-between border-b border-border px-3">
+        <p className="truncate text-sm font-medium text-sidebar-foreground">
+          {workdir?.replace(/\/+$/, "").split("/").pop() ?? "No repository"}
+        </p>
+        <p className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {totalCount} file{totalCount === 1 ? "" : "s"}
+        </p>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -105,11 +107,7 @@ export function Sidebar({
         )}
       </div>
 
-      <CommitBar
-        stagedCount={staged.length}
-        onCommit={onCommit}
-        onCommitAndPush={onCommitAndPush}
-      />
+      <CommitBar stagedCount={staged.length} onCommit={onCommit} />
     </div>
   );
 }

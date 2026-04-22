@@ -96,6 +96,8 @@ export function useDiffs(
             if (result.status === "fulfilled") {
               const [path, resp] = result.value;
               next.set(path, toFileDiffContents(resp));
+            } else {
+              console.warn("[cub] failed to fetch diff:", result.reason);
             }
           }
           return next;
