@@ -78,3 +78,38 @@ export function submitReview(
 ): Promise<SubmitReviewResponse> {
   return invoke<SubmitReviewResponse>("submit_review", { comments });
 }
+
+export interface CloneProgress {
+  id: string;
+  phase: "fetch" | "checkout";
+  received_objects: number;
+  total_objects: number;
+  indexed_objects: number;
+  received_bytes: number;
+  checkout_current: number;
+  checkout_total: number;
+}
+
+export function cloneRepo(args: {
+  url: string;
+  dest: string;
+  id: string;
+}): Promise<string> {
+  return invoke<string>("clone_repo", args);
+}
+
+export function cancelClone(id: string): Promise<void> {
+  return invoke<void>("cancel_clone", { id });
+}
+
+export function cleanupPath(path: string): Promise<void> {
+  return invoke<void>("cleanup_path", { path });
+}
+
+export function initRepo(path: string): Promise<string> {
+  return invoke<string>("init_repo", { path });
+}
+
+export function getRepoBranch(path: string): Promise<string | null> {
+  return invoke<string | null>("get_repo_branch", { path });
+}

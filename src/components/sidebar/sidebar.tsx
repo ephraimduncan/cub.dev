@@ -10,6 +10,7 @@ import { CommitBar } from "./commit-bar";
 import { SidebarContextMenu } from "./sidebar-context-menu";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
+import { IconArrowLeft } from "@tabler/icons-react";
 
 interface SidebarProps {
   workdir: string | null;
@@ -22,6 +23,7 @@ interface SidebarProps {
   onStageAll: () => void;
   onUnstageAll: () => void;
   onCommit: (message: string) => void;
+  onCloseRepo: () => void;
 }
 
 const treeStyle: CSSProperties = {
@@ -63,17 +65,27 @@ export function Sidebar({
   onStageAll,
   onUnstageAll,
   onCommit,
+  onCloseRepo,
 }: SidebarProps) {
   const hasChanges = staged.length > 0 || unstaged.length > 0;
   const totalCount = staged.length + unstaged.length;
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border/70 bg-sidebar">
-      <div className="flex h-10 items-center justify-between border-b border-border px-2">
-        <p className="truncate text-sm font-medium text-sidebar-foreground">
+      <div className="flex h-10 items-center gap-1 border-b border-border px-1.5">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onCloseRepo}
+          aria-label="Back to onboarding"
+          title="Open a different repository"
+        >
+          <IconArrowLeft />
+        </Button>
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground">
           {workdir?.replace(/\/+$/, "").split("/").pop() ?? "No repository"}
         </p>
-        <p className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        <p className="shrink-0 pr-1 text-xs tabular-nums text-muted-foreground">
           {totalCount} file{totalCount === 1 ? "" : "s"}
         </p>
       </div>

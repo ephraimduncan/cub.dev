@@ -2,6 +2,7 @@ mod git;
 mod review_bridge;
 
 use git::AppState;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -12,11 +13,13 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             repo: Mutex::new(None),
             bridge: Mutex::new(None),
             event_listener: Mutex::new(None),
             event_listener_stop: stop_flag.clone(),
+            clone_cancels: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -46,6 +49,11 @@ pub fn run() {
             git::stage_all,
             git::commit,
             git::unstage_all,
+            git::clone_repo,
+            git::cancel_clone,
+            git::cleanup_path,
+            git::init_repo,
+            git::get_repo_branch,
             review_bridge::submit_review,
         ])
         .build(tauri::generate_context!())
