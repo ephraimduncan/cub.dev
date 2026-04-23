@@ -17,6 +17,7 @@ import { CommitBar } from "./commit-bar";
 import { SidebarContextMenu } from "./sidebar-context-menu";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { perfTimed } from "@/lib/perf";
 
@@ -32,6 +33,7 @@ interface SidebarProps {
   onUnstageAll: () => void;
   onCommit: (message: string) => void;
   onCloseRepo: () => void;
+  onDiscardFile: (path: string) => void;
 }
 
 const treeStyle: CSSProperties = {
@@ -74,6 +76,7 @@ export function Sidebar({
   onUnstageAll,
   onCommit,
   onCloseRepo,
+  onDiscardFile,
 }: SidebarProps) {
   const hasChanges = staged.length > 0 || unstaged.length > 0;
   const totalCount = staged.length + unstaged.length;
@@ -113,6 +116,8 @@ export function Sidebar({
             onAction={onUnstageAll}
             onSelectFile={onSelectFile}
             onToggleStage={onToggleStage}
+            onDiscardFile={onDiscardFile}
+            workdir={workdir}
           />
         )}
         {unstaged.length > 0 && (
@@ -125,6 +130,8 @@ export function Sidebar({
             onAction={onStageAll}
             onSelectFile={onSelectFile}
             onToggleStage={onToggleStage}
+            onDiscardFile={onDiscardFile}
+            workdir={workdir}
           />
         )}
       </div>
@@ -143,6 +150,8 @@ interface SectionProps {
   onAction: () => void;
   onSelectFile: (path: string) => void;
   onToggleStage: (path: string) => void;
+  onDiscardFile: (path: string) => void;
+  workdir: string | null;
 }
 
 function Section({
@@ -154,6 +163,8 @@ function Section({
   onAction,
   onSelectFile,
   onToggleStage,
+  onDiscardFile,
+  workdir,
 }: SectionProps) {
   const paths = useMemo(() => files.map((f) => f.path), [files]);
   const gitStatus = useMemo<GitStatusEntry[]>(
@@ -255,6 +266,26 @@ function Section({
     };
   }, [model]);
 
+  // Catch every file-row click (including re-clicks of the already-selected
+  // row). `useFileTreeSelection` is memoized by array equality, so clicking
+  // a selected row does not fire `onSelectionChange` — which would leave
+  // the diff panel stale when the user wants to re-open a collapsed card.
+  useEffect(() => {
+    const wrapper = treeWrapperRef.current;
+    if (wrapper == null) return;
+    const handleClick = (event: MouseEvent) => {
+      for (const el of event.composedPath()) {
+        if (!(el instanceof HTMLElement)) continue;
+        if (el.dataset.itemType === "file") {
+          const itemPath = el.dataset.itemPath;
+          if (itemPath) onSelectFile(itemPath);
+          return;
+        }
+      }
+    };
+    wrapper.addEventListener("click", handleClick);
+    return () => wrapper.removeEventListener("click", handleClick);
+  }, [onSelectFile]);
   return (
     <div className="flex shrink-0 flex-col">
       <div className="flex items-center justify-between px-2 py-1">
@@ -289,7 +320,7 @@ function Section({
               }}
               onDiscard={(p) => {
                 context.close();
-                toast.info(`Discard ${p} — TODO`);
+                onDiscardFile(p);
               }}
               onCopyPath={(p) => {
                 context.close();
@@ -297,7 +328,11 @@ function Section({
               }}
               onRevealInFinder={(p) => {
                 context.close();
-                toast.info(`Reveal ${p} — TODO`);
+                if (!workdir) return;
+                const abs = `${workdir.replace(/\/+$/, "")}/${p}`;
+                revealItemInDir(abs).catch((e) =>
+                  toast.error(`Reveal failed: ${e}`),
+                );
               }}
             />
           )}

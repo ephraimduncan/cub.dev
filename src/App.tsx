@@ -11,7 +11,7 @@ import { Onboarding } from "@/components/onboarding/onboarding";
 import { useRepoStatus } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
-import { useFileWatcher } from "@/hooks/use-file-watcher";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   stageFile,
   unstageFile,
@@ -19,6 +19,8 @@ import {
   unstageAll,
   commit,
   submitReview,
+  discardFile,
+  getLaunchPath,
   type FileEntry,
 } from "@/lib/tauri";
 import { toast } from "sonner";
@@ -45,6 +47,7 @@ function App() {
   const [expandAllSession, setExpandAllSession] =
     useState<ExpandAllSession | null>(null);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
+  const [scrollNonce, setScrollNonce] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [optimisticStage, setOptimisticStage] = useState<Map<string, boolean>>(
     new Map(),
@@ -70,8 +73,10 @@ function App() {
     };
   }, [updateCommentStatus]);
 
-  useFileWatcher(
-    useCallback(() => {
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    const p = listen("repo:changed", () => {
       if (!workdir) {
         perfLog("App", "fileWatcher:skip", { reason: "no-workdir" });
         return;
@@ -89,8 +94,16 @@ function App() {
           totalCommentCount: comments.totalCommentCount,
         });
       }
-    }, [comments.totalCommentCount, loading, refresh, workdir]),
-  );
+    });
+    p.then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [workdir, loading, comments.totalCommentCount, refresh]);
 
   useEffect(() => {
     if (!status) return;
@@ -223,6 +236,7 @@ function App() {
 
   const handleSelectFile = useCallback((path: string) => {
     setScrollToPath(path);
+    setScrollNonce((n) => n + 1);
   }, []);
 
   const handleScrollComplete = useCallback(() => {
@@ -309,6 +323,24 @@ function App() {
     [refresh],
   );
 
+  const handleDiscardFile = useCallback(
+    async (path: string) => {
+      const ok = await ask(
+        `Discard changes to ${path}? This cannot be undone.`,
+        { title: "Discard changes", kind: "warning" },
+      );
+      if (!ok) return;
+      try {
+        await discardFile(path);
+        await refresh();
+        toast.success(`Discarded ${path}`);
+      } catch (e) {
+        toast.error(`Discard failed: ${e}`);
+      }
+    },
+    [refresh],
+  );
+
   const { collectAllComments, markSubmitted } = comments;
   const submittingRef = useRef(false);
 
@@ -343,6 +375,22 @@ function App() {
     },
     [open],
   );
+
+  // Honor `cub [path]` from the command line: auto-open on first mount.
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    let cancelled = false;
+    getLaunchPath()
+      .then((p) => {
+        if (cancelled || !p) return;
+        openRef.current(p).catch((e) => toast.error(`Failed to open: ${e}`));
+      })
+      .catch((e) => console.error("[cub] getLaunchPath failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (!workdir) {
     return (
@@ -388,6 +436,7 @@ function App() {
             onUnstageAll={handleUnstageAll}
             onCommit={handleCommit}
             onCloseRepo={close}
+            onDiscardFile={handleDiscardFile}
           />
         </ResizablePanel>
         <ResizableHandle />
@@ -403,6 +452,7 @@ function App() {
             expandAllTitle={expandAllTitle}
             expandAllSession={expandAllSession}
             scrollToPath={scrollToPath}
+            scrollNonce={scrollNonce}
             onScrollComplete={handleScrollComplete}
             annotationsByFile={comments.annotationsByFile}
             hasOpenForm={comments.hasOpenForm}

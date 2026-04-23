@@ -31,6 +31,7 @@ interface DiffPanelProps {
   expandAllTitle?: string;
   expandAllSession: ExpandAllSession | null;
   scrollToPath: string | null;
+  scrollNonce: number;
   onScrollComplete: () => void;
   annotationsByFile: Map<string, DiffLineAnnotation<CommentMetadata>[]>;
   hasOpenForm: boolean;
@@ -165,6 +166,7 @@ export function DiffPanel({
   expandAllTitle,
   expandAllSession,
   scrollToPath,
+  scrollNonce,
   onScrollComplete,
   annotationsByFile,
   hasOpenForm,
@@ -185,6 +187,7 @@ export function DiffPanel({
   const refCallbacks = useRef<
     Map<string, (handle: DiffCardHandle | null) => void>
   >(new Map());
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const expandAllMetricsRef = useRef<ExpandAllSessionMetrics | null>(null);
 
   const getCardRef = useCallback((path: string) => {
@@ -202,21 +205,31 @@ export function DiffPanel({
     return callback;
   }, []);
 
-  const lastScrolledRef = useRef<string | null>(null);
   useEffect(() => {
     if (!scrollToPath) return;
-    if (scrollToPath === lastScrolledRef.current) {
-      onScrollComplete();
-      return;
-    }
-    lastScrolledRef.current = scrollToPath;
     const handle = cardHandles.current.get(scrollToPath);
     if (handle) {
-      if (!handle.isOpen()) handle.expand();
-      handle.element?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const el = handle.element;
+      if (!handle.isOpen()) {
+        handle.expand();
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        const container = scrollContainerRef.current;
+        if (el && container) {
+          const cRect = container.getBoundingClientRect();
+          const eRect = el.getBoundingClientRect();
+          const fullyVisible =
+            eRect.top >= cRect.top && eRect.bottom <= cRect.bottom;
+          if (!fullyVisible) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      }
     }
     onScrollComplete();
-  }, [scrollToPath, onScrollComplete]);
+    // scrollNonce intentionally in deps: re-fires when the same path is
+    // selected again (after manual collapse).
+  }, [scrollToPath, scrollNonce, onScrollComplete]);
 
   const finalizeExpandAllSession = useCallback(
     (reason: string) => {
@@ -496,7 +509,7 @@ export function DiffPanel({
         onClearResolved={onClearResolved}
         submittingReview={submittingReview}
       />
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
         {parsedFiles.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">

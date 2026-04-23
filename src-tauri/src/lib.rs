@@ -1,11 +1,30 @@
 mod git;
 mod review_bridge;
+mod watcher;
 
 use git::AppState;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Manager;
+
+pub use review_bridge::sidecar_script_path;
+
+static LAUNCH_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Record an initial repository path supplied by `cub [path]` on the command
+/// line. Called before Tauri is built so the frontend can pick it up on mount.
+pub fn set_launch_path(path: PathBuf) {
+    let _ = LAUNCH_PATH.set(path);
+}
+
+#[tauri::command]
+fn get_launch_path() -> Option<String> {
+    LAUNCH_PATH
+        .get()
+        .map(|p| p.to_string_lossy().to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,6 +39,7 @@ pub fn run() {
             event_listener: Mutex::new(None),
             event_listener_stop: stop_flag.clone(),
             clone_cancels: Mutex::new(HashMap::new()),
+            watcher: Mutex::new(None),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -54,7 +74,9 @@ pub fn run() {
             git::cleanup_path,
             git::init_repo,
             git::get_repo_branch,
+            git::discard_file,
             review_bridge::submit_review,
+            get_launch_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -78,6 +100,11 @@ pub fn run() {
                 if let Some(ref mut child) = *guard {
                     let _ = child.kill();
                 }
+            }
+
+            // Drop the file watcher so the background thread exits.
+            if let Ok(mut guard) = state.watcher.lock() {
+                *guard = None;
             }
 
             // Ensure the stop flag is set (redundant but defensive)

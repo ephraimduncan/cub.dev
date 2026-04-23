@@ -37,6 +37,20 @@ pub struct AppState {
     pub event_listener: Mutex<Option<JoinHandle<()>>>,
     pub event_listener_stop: Arc<AtomicBool>,
     pub clone_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub watcher: Mutex<Option<crate::watcher::RepoWatcher>>,
+}
+
+fn restart_watcher(app: &AppHandle, state: &AppState, workdir: &Path) {
+    let new_watcher = match crate::watcher::start(workdir, app.clone()) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("[cub-watcher] failed to start: {e}");
+            None
+        }
+    };
+    if let Ok(mut guard) = state.watcher.lock() {
+        *guard = new_watcher;
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -67,17 +81,22 @@ pub struct RepoStatus {
 /// Open a git repository at `path` and store it in app state.
 /// Returns the absolute workdir path on success.
 #[tauri::command]
-pub fn open_repo(path: String, state: State<AppState>) -> Result<String, String> {
+pub fn open_repo(
+    path: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
     let repo = Repository::discover(&path).map_err(|e| format!("failed to open repo: {e}"))?;
-    let workdir = repo
+    let workdir_path = repo
         .workdir()
         .ok_or_else(|| "bare repositories are not supported".to_string())?
-        .to_string_lossy()
-        .to_string();
+        .to_path_buf();
+    let workdir = workdir_path.to_string_lossy().to_string();
     *state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+    restart_watcher(&app, state.inner(), &workdir_path);
     Ok(workdir)
 }
 
@@ -614,6 +633,108 @@ pub fn unstage_all(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn discard_file(path: String, state: State<AppState>) -> Result<(), String> {
+    let lock = state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+    let workdir = repo.workdir().ok_or("bare repository")?;
+
+    let relative_path = Path::new(&path);
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize workdir: {e}"))?;
+    let target = canonical_workdir.join(relative_path);
+    let safe_target = if target.exists() {
+        target
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize target: {e}"))?
+    } else {
+        let parent = target.parent().ok_or("invalid path")?;
+        let parent_canonical = parent
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize parent: {e}"))?;
+        parent_canonical.join(target.file_name().unwrap_or_default())
+    };
+    if !safe_target.starts_with(&canonical_workdir) {
+        return Err("path traversal detected".to_string());
+    }
+
+    let status = repo
+        .status_file(relative_path)
+        .map_err(|e| format!("failed to status file: {e}"))?;
+    let index_dirty = status.intersects(
+        Status::INDEX_NEW
+            | Status::INDEX_MODIFIED
+            | Status::INDEX_DELETED
+            | Status::INDEX_RENAMED
+            | Status::INDEX_TYPECHANGE,
+    );
+
+    // Pure untracked file or directory: remove from disk, no git state to touch.
+    if status.contains(Status::WT_NEW) && !index_dirty {
+        if safe_target.is_dir() {
+            std::fs::remove_dir_all(&safe_target)
+                .map_err(|e| format!("remove failed: {e}"))?;
+        } else if safe_target.exists() {
+            std::fs::remove_file(&safe_target)
+                .map_err(|e| format!("remove failed: {e}"))?;
+        }
+        return Ok(());
+    }
+
+    // If index has uncommitted changes for this path, reset to HEAD first.
+    if index_dirty {
+        match repo.revparse_single("HEAD") {
+            Ok(head_obj) => {
+                repo.reset_default(Some(&head_obj), [&path])
+                    .map_err(|e| format!("reset_default failed: {e}"))?;
+            }
+            Err(_) => {
+                // No HEAD yet (initial commit): drop from index directly.
+                let mut index = repo
+                    .index()
+                    .map_err(|e| format!("failed to get index: {e}"))?;
+                let _ = index.remove_path(relative_path);
+                index
+                    .write()
+                    .map_err(|e| format!("failed to write index: {e}"))?;
+            }
+        }
+    }
+
+    // Restore workdir from HEAD for that path, if HEAD exists.
+    if repo.revparse_single("HEAD").is_ok() {
+        let mut cb = CheckoutBuilder::new();
+        cb.force();
+        cb.path(&path);
+        repo.checkout_head(Some(&mut cb))
+            .map_err(|e| format!("checkout_head failed: {e}"))?;
+    }
+
+    // Staged-new with no HEAD counterpart: after reset the file is untracked. Remove it.
+    if let Ok(post) = repo.status_file(relative_path) {
+        let post_index_dirty = post.intersects(
+            Status::INDEX_NEW
+                | Status::INDEX_MODIFIED
+                | Status::INDEX_DELETED
+                | Status::INDEX_RENAMED
+                | Status::INDEX_TYPECHANGE,
+        );
+        if post.contains(Status::WT_NEW) && !post_index_dirty {
+            if safe_target.is_dir() {
+                std::fs::remove_dir_all(&safe_target).ok();
+            } else if safe_target.exists() {
+                std::fs::remove_file(&safe_target).ok();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn commit(message: String, state: State<AppState>) -> Result<String, String> {
     let lock = state
         .repo
@@ -762,15 +883,16 @@ pub fn clone_repo(
     }
 
     let repo = result?;
-    let workdir = repo
+    let workdir_path = repo
         .workdir()
         .ok_or_else(|| "bare repositories are not supported".to_string())?
-        .to_string_lossy()
-        .to_string();
+        .to_path_buf();
+    let workdir = workdir_path.to_string_lossy().to_string();
     *state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+    restart_watcher(&app, state.inner(), &workdir_path);
     Ok(workdir)
 }
 
@@ -797,18 +919,23 @@ pub fn cleanup_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn init_repo(path: String, state: State<AppState>) -> Result<String, String> {
+pub fn init_repo(
+    path: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
     std::fs::create_dir_all(&path).map_err(|e| format!("mkdir failed: {e}"))?;
     let repo = Repository::init(&path).map_err(|e| format!("init failed: {e}"))?;
-    let workdir = repo
+    let workdir_path = repo
         .workdir()
         .ok_or_else(|| "bare repositories are not supported".to_string())?
-        .to_string_lossy()
-        .to_string();
+        .to_path_buf();
+    let workdir = workdir_path.to_string_lossy().to_string();
     *state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+    restart_watcher(&app, state.inner(), &workdir_path);
     Ok(workdir)
 }
 

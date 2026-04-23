@@ -113,3 +113,11 @@ export function initRepo(path: string): Promise<string> {
 export function getRepoBranch(path: string): Promise<string | null> {
   return invoke<string | null>("get_repo_branch", { path });
 }
+
+export function discardFile(path: string): Promise<void> {
+  return invoke<void>("discard_file", { path });
+}
+
+export function getLaunchPath(): Promise<string | null> {
+  return invoke<string | null>("get_launch_path");
+}

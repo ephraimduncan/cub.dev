@@ -88,7 +88,7 @@ fn workspace_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "failed to resolve workspace root from executable".to_string())
 }
 
-fn sidecar_script_path() -> Result<PathBuf, String> {
+pub fn sidecar_script_path() -> Result<PathBuf, String> {
     let root = workspace_root()?;
     let path = root.join("sidecar").join("cub-mcp.js");
     if path.exists() {
