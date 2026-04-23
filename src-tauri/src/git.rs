@@ -1,19 +1,22 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Child;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use git2::{Repository, Status, StatusOptions};
+use git2::build::{CheckoutBuilder, RepoBuilder};
+use git2::{FetchOptions, RemoteCallbacks};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 pub struct AppState {
     pub repo: Mutex<Option<Repository>>,
     pub bridge: Mutex<Option<Child>>,
     pub event_listener: Mutex<Option<JoinHandle<()>>>,
     pub event_listener_stop: Arc<AtomicBool>,
+    pub clone_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -570,4 +573,159 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
     };
 
     Ok(oid.to_string())
+}
+
+#[derive(Serialize, Clone)]
+pub struct CloneProgress {
+    pub id: String,
+    pub phase: &'static str,
+    pub received_objects: usize,
+    pub total_objects: usize,
+    pub indexed_objects: usize,
+    pub received_bytes: usize,
+    pub checkout_current: usize,
+    pub checkout_total: usize,
+}
+
+#[tauri::command]
+pub fn clone_repo(
+    url: String,
+    dest: String,
+    id: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .clone_cancels
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?
+        .insert(id.clone(), cancel.clone());
+
+    let result = (|| -> Result<Repository, String> {
+        let mut cb = RemoteCallbacks::new();
+        let a1 = app.clone();
+        let i1 = id.clone();
+        let c1 = cancel.clone();
+        cb.transfer_progress(move |p| {
+            if c1.load(Ordering::SeqCst) {
+                return false;
+            }
+            let _ = a1.emit(
+                "clone:progress",
+                CloneProgress {
+                    id: i1.clone(),
+                    phase: "fetch",
+                    received_objects: p.received_objects(),
+                    total_objects: p.total_objects(),
+                    indexed_objects: p.indexed_objects(),
+                    received_bytes: p.received_bytes(),
+                    checkout_current: 0,
+                    checkout_total: 0,
+                },
+            );
+            true
+        });
+        let mut fo = FetchOptions::new();
+        fo.remote_callbacks(cb);
+
+        let mut co = CheckoutBuilder::new();
+        let a2 = app.clone();
+        let i2 = id.clone();
+        let c2 = cancel.clone();
+        co.progress(move |_, cur, tot| {
+            if c2.load(Ordering::SeqCst) {
+                return;
+            }
+            let _ = a2.emit(
+                "clone:progress",
+                CloneProgress {
+                    id: i2.clone(),
+                    phase: "checkout",
+                    received_objects: 0,
+                    total_objects: 0,
+                    indexed_objects: 0,
+                    received_bytes: 0,
+                    checkout_current: cur,
+                    checkout_total: tot,
+                },
+            );
+        });
+
+        RepoBuilder::new()
+            .fetch_options(fo)
+            .with_checkout(co)
+            .clone(&url, Path::new(&dest))
+            .map_err(|e| {
+                if cancel.load(Ordering::SeqCst) {
+                    "clone cancelled".to_string()
+                } else {
+                    format!("clone failed: {e}")
+                }
+            })
+    })();
+
+    if let Ok(mut guard) = state.clone_cancels.lock() {
+        guard.remove(&id);
+    }
+
+    let repo = result?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "bare repositories are not supported".to_string())?
+        .to_string_lossy()
+        .to_string();
+    *state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+    Ok(workdir)
+}
+
+#[tauri::command]
+pub fn cancel_clone(id: String, state: State<AppState>) -> Result<(), String> {
+    if let Some(flag) = state
+        .clone_cancels
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))?
+        .get(&id)
+    {
+        flag.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cleanup_path(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        std::fs::remove_dir_all(p).map_err(|e| format!("cleanup failed: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn init_repo(path: String, state: State<AppState>) -> Result<String, String> {
+    std::fs::create_dir_all(&path).map_err(|e| format!("mkdir failed: {e}"))?;
+    let repo = Repository::init(&path).map_err(|e| format!("init failed: {e}"))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "bare repositories are not supported".to_string())?
+        .to_string_lossy()
+        .to_string();
+    *state
+        .repo
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+    Ok(workdir)
+}
+
+#[tauri::command]
+pub fn get_repo_branch(path: String) -> Result<Option<String>, String> {
+    let repo = Repository::discover(&path).map_err(|e| format!("open: {e}"))?;
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
+    Ok(head.shorthand().map(|s| s.to_string()))
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   openRepo,
   getRepoStatus,
@@ -16,6 +16,8 @@ interface UseRepoStatusReturn {
   status: MergedRepoStatus | null;
   error: string | null;
   refresh: () => Promise<void>;
+  open: (path: string) => Promise<void>;
+  close: () => void;
 }
 
 function mergeStatus(raw: RepoStatus): MergedRepoStatus {
@@ -64,16 +66,24 @@ export function useRepoStatus(): UseRepoStatusReturn {
     }
   }, [applyStatus]);
 
-  useEffect(() => {
-    openRepo(".")
-      .then((dir) => {
-        setWorkdir(dir);
-        setError(null);
-        return getRepoStatus();
-      })
-      .then((raw) => applyStatus(mergeStatus(raw)))
-      .catch((e) => setError(String(e)));
-  }, [applyStatus]);
+  const open = useCallback(
+    async (path: string) => {
+      setError(null);
+      const dir = await openRepo(path);
+      const raw = await getRepoStatus();
+      fingerprintRef.current = "";
+      applyStatus(mergeStatus(raw));
+      setWorkdir(dir);
+    },
+    [applyStatus],
+  );
 
-  return { workdir, status, error, refresh };
+  const close = useCallback(() => {
+    setWorkdir(null);
+    setStatus(null);
+    setError(null);
+    fingerprintRef.current = "";
+  }, []);
+
+  return { workdir, status, error, refresh, open, close };
 }

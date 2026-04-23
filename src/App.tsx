@@ -7,6 +7,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { DiffPanel } from "@/components/diff-panel/diff-panel";
+import { Onboarding } from "@/components/onboarding/onboarding";
 import { useRepoStatus } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
@@ -25,7 +26,7 @@ interface CommentStatusPayload {
 }
 
 function App() {
-  const { workdir, status, error, refresh } = useRepoStatus();
+  const { workdir, status, error, refresh, open, close } = useRepoStatus();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
@@ -224,6 +225,26 @@ function App() {
     }
   }, [collectAllComments, markSubmitted]);
 
+  const handleOnboardingOpen = useCallback(
+    async (path: string) => {
+      try {
+        await open(path);
+      } catch (e) {
+        toast.error(`Failed to open: ${e}`);
+      }
+    },
+    [open],
+  );
+
+  if (!workdir) {
+    return (
+      <>
+        <Onboarding onOpened={handleOnboardingOpen} />
+        <Toaster />
+      </>
+    );
+  }
+
   if (error) {
     return (
       <main className="flex h-dvh items-center justify-center p-4">
@@ -244,7 +265,7 @@ function App() {
     <>
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full isolate bg-background"
+        className="h-full isolate border-t border-border/70 bg-background"
       >
         <ResizablePanel defaultSize="25%" minSize="25%" maxSize="35%">
           <Sidebar
@@ -258,6 +279,7 @@ function App() {
             onStageAll={handleStageAll}
             onUnstageAll={handleUnstageAll}
             onCommit={handleCommit}
+            onCloseRepo={close}
           />
         </ResizablePanel>
         <ResizableHandle />
