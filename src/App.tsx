@@ -244,7 +244,7 @@ function App() {
     <>
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full isolate bg-background"
+        className="h-full isolate border-t border-border/70 bg-background"
       >
         <ResizablePanel defaultSize="25%" minSize="25%" maxSize="35%">
           <Sidebar

@@ -26,13 +26,18 @@ import { CommentBubble } from "@/components/comments/comment-bubble";
 import { cn } from "@/lib/utils";
 import { IconChevronDown } from "@tabler/icons-react";
 import type { ChangeKind } from "@/lib/tauri";
-import { FILE_STATUS, DIFF_ADDITION_COLOR, DIFF_DELETION_COLOR } from "@/lib/status";
+import {
+  FILE_STATUS,
+  DIFF_ADDITION_COLOR,
+  DIFF_DELETION_COLOR,
+} from "@/lib/status";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
 const DIFF_CODE_STYLE = {
   "--diffs-font-family": "'App Mono', monospace",
   "--diffs-font-size": "13px",
   "--diffs-line-height": "19px",
+  "--diffs-gap-block": "4px",
 } as React.CSSProperties;
 
 interface DiffCardBaseProps {
@@ -178,7 +183,10 @@ export const DiffCard = memo(
 
     const renderAnnotation = useCallback(
       (annotation: DiffLineAnnotation<CommentMetadata>) => {
-        if (annotation.metadata.status === "draft" && !annotation.metadata.text) {
+        if (
+          annotation.metadata.status === "draft" &&
+          !annotation.metadata.text
+        ) {
           return (
             <CommentForm
               onSubmit={(text, actionType) =>
@@ -298,18 +306,16 @@ export const DiffCard = memo(
               >
                 {filename}
               </p>
-              {dir && <p className="truncate text-xs text-muted-foreground">{dir}</p>}
+              {dir && (
+                <p className="truncate text-xs text-muted-foreground">{dir}</p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
               {additions > 0 && (
-                <span className={DIFF_ADDITION_COLOR}>
-                  +{additions}
-                </span>
+                <span className={DIFF_ADDITION_COLOR}>+{additions}</span>
               )}
               {deletions > 0 && (
-                <span className={DIFF_DELETION_COLOR}>
-                  -{deletions}
-                </span>
+                <span className={DIFF_DELETION_COLOR}>-{deletions}</span>
               )}
             </div>
           </CollapsibleTrigger>
