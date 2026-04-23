@@ -43,7 +43,6 @@ const DIFF_CODE_STYLE = {
   "--diffs-font-family": "'App Mono', monospace",
   "--diffs-font-size": "13px",
   "--diffs-line-height": "19px",
-  "--diffs-gap-block": "4px",
 } as React.CSSProperties;
 
 // Shared aggregators so 600 DiffCard mounts produce a single summary log
@@ -292,6 +291,13 @@ export const DiffCard = memo(
       [filePath, onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
     );
 
+    const hideGap = kind === "added" || kind === "deleted";
+
+    const diffStyleOverride = useMemo(() => ({
+      ...DIFF_CODE_STYLE,
+      "--diffs-gap-block": hideGap ? "0px" : "4px",
+    }) as React.CSSProperties, [hideGap]);
+
     const fileDiffOptions = useMemo(
       () => ({
         themeType: "system" as const,
@@ -305,8 +311,12 @@ export const DiffCard = memo(
         enableGutterUtility: !hasOpenForm,
         onLineSelectionEnd: handleLineSelectionEnd,
         onGutterUtilityClick: addAnnotationForRange,
+        // [data-code] uses `overflow: scroll clip` and reserves 6px for the
+        // horizontal scrollbar gutter at the bottom. With wrap mode we never
+        // overflow horizontally, so collapse it when we want a flush bottom.
+        unsafeCSS: hideGap ? "[data-code] { overflow-x: clip; }" : undefined,
       }),
-      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm],
+      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm, hideGap],
     );
 
     const textFileDiff =
@@ -344,7 +354,7 @@ export const DiffCard = memo(
             <PierreFileDiff<CommentMetadata>
               fileDiff={textFileDiff!}
               className="min-w-0 overflow-hidden"
-              style={DIFF_CODE_STYLE}
+              style={diffStyleOverride}
               options={fileDiffOptions}
               lineAnnotations={annotations}
               selectedLines={selectedLines}
@@ -362,6 +372,7 @@ export const DiffCard = memo(
         contentKind,
         contentMountRef,
         contentProps.contentKind,
+        diffStyleOverride,
         fileDiffOptions,
         renderAnnotation,
         selectedLines,
@@ -394,7 +405,7 @@ export const DiffCard = memo(
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/70 bg-muted/30 px-4 py-2.5 text-left"
+            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
           >
             <IconChevronDown
               className={cn(

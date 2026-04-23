@@ -63,7 +63,7 @@ export function CommentBubble({
     <div className="p-2">
       <div
         className={cn(
-          "rounded-md border border-border/50 bg-card p-2.5",
+          "rounded-md border border-border bg-card p-2.5",
           isTerminal && "opacity-50",
         )}
       >

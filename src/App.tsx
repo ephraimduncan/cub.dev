@@ -12,7 +12,15 @@ import { useRepoStatus } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
 import { useFileWatcher } from "@/hooks/use-file-watcher";
-import { stageFile, unstageFile, stageAll, unstageAll, commit, submitReview, type FileEntry } from "@/lib/tauri";
+import {
+  stageFile,
+  unstageFile,
+  stageAll,
+  unstageAll,
+  commit,
+  submitReview,
+  type FileEntry,
+} from "@/lib/tauri";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import type { CommentStatus } from "@/types/comments";
@@ -46,14 +54,17 @@ function App() {
   // Listen for real-time comment status updates from the Tauri event bridge
   const { updateCommentStatus } = comments;
   useEffect(() => {
-    const promise = listen<CommentStatusPayload>("review:comment-updated", (event) => {
-      updateCommentStatus(
-        event.payload.comment_id,
-        event.payload.status,
-        event.payload.summary,
-        event.payload.dismiss_reason,
-      );
-    });
+    const promise = listen<CommentStatusPayload>(
+      "review:comment-updated",
+      (event) => {
+        updateCommentStatus(
+          event.payload.comment_id,
+          event.payload.status,
+          event.payload.summary,
+          event.payload.dismiss_reason,
+        );
+      },
+    );
     return () => {
       promise.then((unlisten) => unlisten());
     };
@@ -104,7 +115,8 @@ function App() {
   // Apply optimistic stage toggles to the raw staged/unstaged lists so the
   // sidebar sections reshuffle instantly without waiting for the backend.
   const { stagedView, unstagedView } = useMemo(() => {
-    if (!status) return { stagedView: [] as FileEntry[], unstagedView: [] as FileEntry[] };
+    if (!status)
+      return { stagedView: [] as FileEntry[], unstagedView: [] as FileEntry[] };
     if (optimisticStage.size === 0) {
       return { stagedView: status.staged, unstagedView: status.unstaged };
     }
@@ -198,7 +210,14 @@ function App() {
     });
     setExpandAllSession(nextSession);
     setAllExpanded(true);
-  }, [allExpanded, allFiles.length, diffStyle, diffs.size, expandAllSession?.id, loading]);
+  }, [
+    allExpanded,
+    allFiles.length,
+    diffStyle,
+    diffs.size,
+    expandAllSession?.id,
+    loading,
+  ]);
 
   const expandAllTitle = allExpanded ? "Collapse All" : "Expand All";
 
@@ -354,9 +373,9 @@ function App() {
     <>
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full isolate border-t border-border/70 bg-background"
+        className="h-full isolate border-t border-border bg-background"
       >
-        <ResizablePanel defaultSize="25%" minSize="25%" maxSize="35%">
+        <ResizablePanel defaultSize="25%" minSize={300} maxSize={400}>
           <Sidebar
             workdir={workdir}
             staged={stagedView}
