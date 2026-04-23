@@ -16,6 +16,7 @@ import { stageFile, unstageFile, stageAll, unstageAll, commit, submitReview, typ
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import type { CommentStatus } from "@/types/comments";
+import { perfLog, perfLogJson, type ExpandAllSession } from "@/lib/perf";
 
 interface CommentStatusPayload {
   review_id: string;
@@ -25,17 +26,22 @@ interface CommentStatusPayload {
   dismiss_reason: string | null;
 }
 
+const AUTO_EXPAND_FILE_LIMIT = 100;
+
 function App() {
   const { workdir, status, error, refresh, open, close } = useRepoStatus();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
-  const [allExpanded, setAllExpanded] = useState(true);
+  const [allExpanded, setAllExpanded] = useState(false);
+  const [expandAllSession, setExpandAllSession] =
+    useState<ExpandAllSession | null>(null);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [optimisticStage, setOptimisticStage] = useState<Map<string, boolean>>(
     new Map(),
   );
+  const expandSessionIdRef = useRef(0);
 
   // Listen for real-time comment status updates from the Tauri event bridge
   const { updateCommentStatus } = comments;
@@ -55,11 +61,45 @@ function App() {
 
   useFileWatcher(
     useCallback(() => {
-      if (comments.totalCommentCount === 0) {
-        refresh();
+      if (!workdir) {
+        perfLog("App", "fileWatcher:skip", { reason: "no-workdir" });
+        return;
       }
-    }, [comments.totalCommentCount, refresh]),
+      if (loading) {
+        perfLog("App", "fileWatcher:skip", { reason: "diffs-loading" });
+        return;
+      }
+      if (comments.totalCommentCount === 0) {
+        perfLog("App", "fileWatcher:tick");
+        refresh();
+      } else {
+        perfLog("App", "fileWatcher:skip", {
+          reason: "open-comments",
+          totalCommentCount: comments.totalCommentCount,
+        });
+      }
+    }, [comments.totalCommentCount, loading, refresh, workdir]),
   );
+
+  useEffect(() => {
+    if (!status) return;
+    perfLog("App", "status:apply", {
+      staged: status.staged.length,
+      unstaged: status.unstaged.length,
+      total: status.staged.length + status.unstaged.length,
+    });
+  }, [status]);
+
+  useEffect(() => {
+    perfLog("App", "diffs:change", {
+      diffCount: diffs.size,
+      loading,
+    });
+  }, [diffs, loading]);
+
+  useEffect(() => {
+    perfLog("App", "allExpanded:change", { allExpanded });
+  }, [allExpanded]);
 
   // Apply optimistic stage toggles to the raw staged/unstaged lists so the
   // sidebar sections reshuffle instantly without waiting for the backend.
@@ -112,6 +152,55 @@ function App() {
     }
     return files;
   }, [status]);
+
+  const autoExpandedRepoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workdir) {
+      autoExpandedRepoRef.current = null;
+      setExpandAllSession(null);
+      return;
+    }
+    if (!status) return;
+    if (autoExpandedRepoRef.current === workdir) return;
+    autoExpandedRepoRef.current = workdir;
+    const totalFiles = status.staged.length + status.unstaged.length;
+    const shouldExpand = totalFiles <= AUTO_EXPAND_FILE_LIMIT;
+    perfLog("App", "allExpanded:auto", {
+      totalFiles,
+      shouldExpand,
+      limit: AUTO_EXPAND_FILE_LIMIT,
+    });
+    setExpandAllSession(null);
+    setAllExpanded(shouldExpand);
+  }, [status, workdir]);
+
+  const handleToggleExpandAll = useCallback(() => {
+    if (allExpanded) {
+      perfLogJson("ExpandAll", "collapseClick", {
+        activeSessionId: expandAllSession?.id ?? null,
+        totalFiles: allFiles.length,
+      });
+      setExpandAllSession(null);
+      setAllExpanded(false);
+      return;
+    }
+    const nextSession: ExpandAllSession = {
+      id: ++expandSessionIdRef.current,
+      startedAt: performance.now(),
+      requestedFileCount: allFiles.length,
+    };
+    perfLogJson("ExpandAll", "click", {
+      sessionId: nextSession.id,
+      totalFiles: allFiles.length,
+      loadedDiffs: diffs.size,
+      loading,
+      diffStyle,
+    });
+    setExpandAllSession(nextSession);
+    setAllExpanded(true);
+  }, [allExpanded, allFiles.length, diffStyle, diffs.size, expandAllSession?.id, loading]);
+
+  const expandAllTitle = allExpanded ? "Collapse All" : "Expand All";
 
   const handleSelectFile = useCallback((path: string) => {
     setScrollToPath(path);
@@ -291,7 +380,9 @@ function App() {
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}
-            onToggleExpandAll={() => setAllExpanded((prev) => !prev)}
+            onToggleExpandAll={handleToggleExpandAll}
+            expandAllTitle={expandAllTitle}
+            expandAllSession={expandAllSession}
             scrollToPath={scrollToPath}
             onScrollComplete={handleScrollComplete}
             annotationsByFile={comments.annotationsByFile}

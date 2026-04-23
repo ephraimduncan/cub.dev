@@ -11,6 +11,7 @@ import { SidebarContextMenu } from "./sidebar-context-menu";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 import { IconArrowLeft } from "@tabler/icons-react";
+import { perfTimed } from "@/lib/perf";
 
 interface SidebarProps {
   workdir: string | null;
@@ -169,12 +170,22 @@ function Section({
   });
 
   useEffect(() => {
-    model.resetPaths(paths);
-  }, [paths, model]);
+    perfTimed(
+      "Sidebar",
+      "model.resetPaths",
+      () => model.resetPaths(paths),
+      { treeId, count: paths.length },
+    );
+  }, [paths, model, treeId]);
 
   useEffect(() => {
-    model.setGitStatus(gitStatus);
-  }, [gitStatus, model]);
+    perfTimed(
+      "Sidebar",
+      "model.setGitStatus",
+      () => model.setGitStatus(gitStatus),
+      { treeId, count: gitStatus.length },
+    );
+  }, [gitStatus, model, treeId]);
 
   const selectedPaths = useFileTreeSelection(model);
   const lastEmittedRef = useRef<string | null>(null);

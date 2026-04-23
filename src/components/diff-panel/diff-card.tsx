@@ -2,6 +2,7 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -16,6 +17,11 @@ import type {
 } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import { getAnnotationTarget } from "./annotation-target";
+import {
+  createPerfAggregator,
+  type ExpandAllCardMetric,
+  type ExpandAllSession,
+} from "@/lib/perf";
 import {
   Collapsible,
   CollapsibleContent,
@@ -40,6 +46,20 @@ const DIFF_CODE_STYLE = {
   "--diffs-gap-block": "4px",
 } as React.CSSProperties;
 
+// Shared aggregators so 600 DiffCard mounts produce a single summary log
+// rather than 600 lines. Flush is debounced to the end of the mount burst.
+const mountAgg = createPerfAggregator("DiffCard", "mountPaint");
+const renderAgg = createPerfAggregator("DiffCard", "renderCommit");
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    mountAgg.flush(15);
+    renderAgg.flush(15);
+  }, 500);
+}
+
 interface DiffCardBaseProps {
   filePath: string;
   additions: number;
@@ -47,6 +67,8 @@ interface DiffCardBaseProps {
   kind: ChangeKind;
   diffStyle: "unified" | "split";
   expanded: boolean;
+  expandAllSession: ExpandAllSession | null;
+  onExpandAllMetric: (metric: ExpandAllCardMetric) => void;
   annotations: DiffLineAnnotation<CommentMetadata>[];
   hasOpenForm: boolean;
   onAddAnnotation: (
@@ -118,6 +140,8 @@ export const DiffCard = memo(
       kind,
       diffStyle,
       expanded,
+      expandAllSession,
+      onExpandAllMetric,
       annotations,
       hasOpenForm,
       onAddAnnotation,
@@ -128,10 +152,33 @@ export const DiffCard = memo(
     },
     ref,
   ) {
+    const renderStartRef = useRef(performance.now());
+    renderStartRef.current = performance.now();
+
     const [isOpen, setIsOpen] = useState(expanded);
     const isOpenRef = useRef(isOpen);
     isOpenRef.current = isOpen;
     const elementRef = useRef<HTMLDivElement | null>(null);
+    const mountStartRef = useRef(performance.now());
+    const previousExpandedRef = useRef(expanded);
+    const openTransitionRef = useRef<ExpandAllSession | null>(null);
+    const mountedContentSessionRef = useRef<number | null>(null);
+    const committedContentSessionRef = useRef<number | null>(null);
+    const contentKind = contentProps.contentKind;
+
+    useEffect(() => {
+      const ms = performance.now() - mountStartRef.current;
+      mountAgg.record(filePath, ms);
+      scheduleFlush();
+      // Only fire on mount.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useLayoutEffect(() => {
+      const ms = performance.now() - renderStartRef.current;
+      renderAgg.record(filePath, ms);
+      scheduleFlush();
+    });
 
     useImperativeHandle(
       ref,
@@ -147,10 +194,27 @@ export const DiffCard = memo(
 
     // Sync when parent toggles expand/collapse all.
     // useLayoutEffect (not useEffect) to update before paint — no visible flicker.
-    // keepMounted on CollapsibleContent avoids re-mount cost on subsequent toggles.
     useLayoutEffect(() => {
+      const wasExpanded = previousExpandedRef.current;
+      previousExpandedRef.current = expanded;
+      if (expanded && !wasExpanded && expandAllSession) {
+        openTransitionRef.current = expandAllSession;
+        mountedContentSessionRef.current = null;
+        committedContentSessionRef.current = null;
+        onExpandAllMetric({
+          sessionId: expandAllSession.id,
+          path: filePath,
+          phase: "propSync",
+          ms: +(performance.now() - expandAllSession.startedAt).toFixed(2),
+          contentKind,
+        });
+      } else if (!expanded) {
+        openTransitionRef.current = null;
+        mountedContentSessionRef.current = null;
+        committedContentSessionRef.current = null;
+      }
       setIsOpen(expanded);
-    }, [expanded]);
+    }, [contentKind, expandAllSession, expanded, filePath, onExpandAllMetric]);
     const [selectedLines, setSelectedLines] =
       useState<SelectedLineRange | null>(null);
 
@@ -255,27 +319,48 @@ export const DiffCard = memo(
             contentProps.newBinary,
           )
         : null;
+    const contentMountRef = useCallback(
+      (node: HTMLDivElement | null) => {
+        if (!node) return;
+        const transition = openTransitionRef.current;
+        if (!transition || mountedContentSessionRef.current === transition.id) {
+          return;
+        }
+        mountedContentSessionRef.current = transition.id;
+        onExpandAllMetric({
+          sessionId: transition.id,
+          path: filePath,
+          phase: "contentMount",
+          ms: +(performance.now() - transition.startedAt).toFixed(2),
+          contentKind,
+        });
+      },
+      [contentKind, filePath, onExpandAllMetric],
+    );
     const content = useMemo(
       () =>
         contentProps.contentKind === "text" ? (
-          <PierreFileDiff<CommentMetadata>
-            fileDiff={textFileDiff!}
-            className="min-w-0 overflow-hidden"
-            style={DIFF_CODE_STYLE}
-            options={fileDiffOptions}
-            lineAnnotations={annotations}
-            selectedLines={selectedLines}
-            renderAnnotation={renderAnnotation}
-            disableWorkerPool
-          />
+          <div ref={contentMountRef}>
+            <PierreFileDiff<CommentMetadata>
+              fileDiff={textFileDiff!}
+              className="min-w-0 overflow-hidden"
+              style={DIFF_CODE_STYLE}
+              options={fileDiffOptions}
+              lineAnnotations={annotations}
+              selectedLines={selectedLines}
+              renderAnnotation={renderAnnotation}
+            />
+          </div>
         ) : (
-          <div className="px-4 py-6 text-sm text-muted-foreground">
+          <div ref={contentMountRef} className="px-4 py-6 text-sm text-muted-foreground">
             <p>{binaryMessage}</p>
           </div>
         ),
       [
         annotations,
         binaryMessage,
+        contentKind,
+        contentMountRef,
         contentProps.contentKind,
         fileDiffOptions,
         renderAnnotation,
@@ -283,6 +368,26 @@ export const DiffCard = memo(
         textFileDiff,
       ],
     );
+
+    useLayoutEffect(() => {
+      const transition = openTransitionRef.current;
+      if (
+        !isOpen ||
+        !transition ||
+        committedContentSessionRef.current === transition.id
+      ) {
+        return;
+      }
+      committedContentSessionRef.current = transition.id;
+      onExpandAllMetric({
+        sessionId: transition.id,
+        path: filePath,
+        phase: "renderCommit",
+        ms: +(performance.now() - transition.startedAt).toFixed(2),
+        contentKind,
+      });
+      openTransitionRef.current = null;
+    });
 
     return (
       <div ref={elementRef} className="min-w-0 w-full overflow-clip">
@@ -319,7 +424,7 @@ export const DiffCard = memo(
               )}
             </div>
           </CollapsibleTrigger>
-          <CollapsibleContent keepMounted>{content}</CollapsibleContent>
+          <CollapsibleContent>{content}</CollapsibleContent>
         </Collapsible>
       </div>
     );

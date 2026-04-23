@@ -17,6 +17,9 @@ export default defineConfig(async () => ({
   optimizeDeps: {
     include: ["@pierre/diffs", "@pierre/diffs/react"],
   },
+  worker: {
+    format: "es",
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

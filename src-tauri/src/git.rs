@@ -4,12 +4,32 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use git2::{Repository, Status, StatusOptions};
 use git2::build::{CheckoutBuilder, RepoBuilder};
 use git2::{FetchOptions, RemoteCallbacks};
 use serde::Serialize;
+use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
+
+// Temporary perf instrumentation. Emits perf:log events to the frontend and
+// also prints to stderr so logs show up in the terminal that launched the
+// Tauri process. Remove once the lag investigation is done.
+fn perf_event(app: &AppHandle, op: &str, extra: serde_json::Value) {
+    eprintln!("[cub-perf] rust:{op} {extra}");
+    let mut payload = match extra {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    payload.insert("op".to_string(), serde_json::Value::String(op.to_string()));
+    let _ = app.emit("perf:log", serde_json::Value::Object(payload));
+}
+
+fn ms_since(start: Instant) -> f64 {
+    let d = start.elapsed();
+    (d.as_secs_f64() * 1000.0 * 100.0).round() / 100.0
+}
 
 pub struct AppState {
     pub repo: Mutex<Option<Repository>>,
@@ -88,39 +108,59 @@ fn count_diff_lines(
 }
 
 #[tauri::command]
-pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
+pub fn get_repo_status(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<RepoStatus, String> {
+    let total_start = Instant::now();
+    let lock_start = Instant::now();
     let lock = state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
+    let lock_ms = ms_since(lock_start);
     let repo = lock.as_ref().ok_or("no repository open")?;
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
 
+    let statuses_start = Instant::now();
     let statuses = repo
         .statuses(Some(&mut opts))
         .map_err(|e| format!("failed to get status: {e}"))?;
+    let statuses_ms = ms_since(statuses_start);
+    let statuses_count = statuses.len();
 
     let head_tree = repo
         .revparse_single("HEAD^{tree}")
         .ok()
         .and_then(|obj| obj.into_tree().ok());
 
+    let staged_diff_start = Instant::now();
     let staged_diff = repo
         .diff_tree_to_index(head_tree.as_ref(), None, None)
         .map_err(|e| format!("failed to diff staged: {e}"))?;
-    let staged_counts = count_diff_lines(&staged_diff)?;
+    let staged_diff_ms = ms_since(staged_diff_start);
 
+    let staged_count_start = Instant::now();
+    let staged_counts = count_diff_lines(&staged_diff)?;
+    let staged_count_ms = ms_since(staged_count_start);
+
+    let unstaged_diff_start = Instant::now();
     let unstaged_diff = repo
         .diff_index_to_workdir(None, None)
         .map_err(|e| format!("failed to diff unstaged: {e}"))?;
+    let unstaged_diff_ms = ms_since(unstaged_diff_start);
+
+    let unstaged_count_start = Instant::now();
     let unstaged_counts = count_diff_lines(&unstaged_diff)?;
+    let unstaged_count_ms = ms_since(unstaged_count_start);
 
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
 
+    let classify_start = Instant::now();
     for entry in statuses.iter() {
         let path = match entry.path() {
             Some(p) => p.to_string(),
@@ -189,6 +229,26 @@ pub fn get_repo_status(state: State<AppState>) -> Result<RepoStatus, String> {
             untracked.push(path);
         }
     }
+    let classify_ms = ms_since(classify_start);
+
+    perf_event(
+        &app,
+        "get_repo_status",
+        json!({
+            "totalMs": ms_since(total_start),
+            "lockWaitMs": lock_ms,
+            "statusesMs": statuses_ms,
+            "statusesCount": statuses_count,
+            "stagedDiffMs": staged_diff_ms,
+            "stagedCountLinesMs": staged_count_ms,
+            "stagedFiles": staged.len(),
+            "unstagedDiffMs": unstaged_diff_ms,
+            "unstagedCountLinesMs": unstaged_count_ms,
+            "unstagedFiles": unstaged.len(),
+            "untrackedFiles": untracked.len(),
+            "classifyMs": classify_ms,
+        }),
+    );
 
     Ok(RepoStatus {
         staged,
@@ -301,22 +361,54 @@ fn read_index_file(repo: &Repository, path: &Path) -> Result<FileSideContent, St
 pub fn get_file_contents(
     path: String,
     staged: Option<bool>,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<FileContentsResponse, String> {
+    let total_start = Instant::now();
+    let lock_start = Instant::now();
     let lock = state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
+    let lock_ms = ms_since(lock_start);
     let repo = lock.as_ref().ok_or("no repository open")?;
     let workdir = repo.workdir().ok_or("bare repository")?;
     let relative_path = Path::new(&path);
 
+    let head_start = Instant::now();
     let old_side = read_head_file(repo, relative_path)?;
+    let head_ms = ms_since(head_start);
+
+    let side = if staged.unwrap_or(false) { "index" } else { "workdir" };
+    let new_start = Instant::now();
     let new_side = if staged.unwrap_or(false) {
         read_index_file(repo, relative_path)?
     } else {
         read_workdir_file(workdir, relative_path)?
     };
+    let new_ms = ms_since(new_start);
+
+    let total_ms = ms_since(total_start);
+    // Filter out the firehose: only emit when a single call is slow. 600
+    // parallel fast calls would otherwise drown the console.
+    if total_ms >= 8.0 || lock_ms >= 5.0 {
+        perf_event(
+            &app,
+            "get_file_contents:slow",
+            json!({
+                "path": &path,
+                "side": side,
+                "totalMs": total_ms,
+                "lockWaitMs": lock_ms,
+                "headMs": head_ms,
+                "newMs": new_ms,
+                "oldBinary": old_side.is_binary,
+                "newBinary": new_side.is_binary,
+                "oldLen": old_side.content.as_ref().map(|s| s.len()).unwrap_or(0),
+                "newLen": new_side.content.as_ref().map(|s| s.len()).unwrap_or(0),
+            }),
+        );
+    }
 
     Ok(FileContentsResponse {
         name: path,

@@ -4,6 +4,7 @@ import {
   type FileContentsResponse,
   type FileEntry,
 } from "@/lib/tauri";
+import { createPerfAggregator, perfLog } from "@/lib/perf";
 
 type TextFileDiffContents = {
   kind: "text";
@@ -73,6 +74,13 @@ export function useDiffs(
       setDiffs(pruned);
     }
 
+    perfLog("useDiffs", "effect:run", {
+      totalPaths: paths.length,
+      cached: paths.length - missing.length,
+      missing: missing.length,
+      pruned: needsPrune,
+    });
+
     if (missing.length === 0) {
       setLoading(false);
       return;
@@ -81,11 +89,29 @@ export function useDiffs(
     let cancelled = false;
 
     setLoading(true);
+    const batchStart = performance.now();
+    const perFileAgg = createPerfAggregator(
+      "useDiffs",
+      "getFileContents:perFile",
+    );
+    let okCount = 0;
+    let errCount = 0;
 
     void Promise.allSettled(
       missing.map(async (path) => {
-        const resp = await getFileContents(path);
-        return [path, resp] as const;
+        const start = performance.now();
+        try {
+          const resp = await getFileContents(path);
+          const ms = performance.now() - start;
+          perFileAgg.record(path, ms);
+          okCount += 1;
+          return [path, resp] as const;
+        } catch (err) {
+          const ms = performance.now() - start;
+          perFileAgg.record(path, ms);
+          errCount += 1;
+          throw err;
+        }
       }),
     )
       .then((results) => {
@@ -105,6 +131,15 @@ export function useDiffs(
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+        const totalMs = +(performance.now() - batchStart).toFixed(2);
+        perfLog("useDiffs", "getFileContents:batchDone", {
+          requested: missing.length,
+          ok: okCount,
+          errors: errCount,
+          totalMs,
+          cancelled,
+        });
+        perFileAgg.flush(15);
       });
 
     return () => {
