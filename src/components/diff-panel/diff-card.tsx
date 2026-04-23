@@ -2,8 +2,10 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type {
@@ -14,7 +16,6 @@ import type {
 } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import { getAnnotationTarget } from "./annotation-target";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
@@ -85,6 +86,12 @@ type DiffCardProps = DiffCardBaseProps &
       }
   );
 
+export interface DiffCardHandle {
+  element: HTMLDivElement | null;
+  isOpen: () => boolean;
+  expand: () => void;
+}
+
 function getBinaryDiffMessage(
   kind: ChangeKind,
   oldBinary: boolean,
@@ -102,13 +109,13 @@ function getBinaryDiffMessage(
 }
 
 export const DiffCard = memo(
-  forwardRef<HTMLDivElement, DiffCardProps>(function DiffCard(
+  forwardRef<DiffCardHandle, DiffCardProps>(function DiffCard(
     {
       filePath,
       additions,
       deletions,
       kind,
-      stageState,
+      stageState: _stageState,
       diffStyle,
       expanded,
       annotations,
@@ -117,12 +124,27 @@ export const DiffCard = memo(
       onCancelAnnotation,
       onSubmitAnnotation,
       onDeleteAnnotation,
-      onToggleStage,
+      onToggleStage: _onToggleStage,
       ...contentProps
     },
     ref,
   ) {
     const [isOpen, setIsOpen] = useState(expanded);
+    const isOpenRef = useRef(isOpen);
+    isOpenRef.current = isOpen;
+    const elementRef = useRef<HTMLDivElement | null>(null);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        get element() {
+          return elementRef.current;
+        },
+        isOpen: () => isOpenRef.current,
+        expand: () => setIsOpen(true),
+      }),
+      [],
+    );
 
     // Sync when parent toggles expand/collapse all.
     // useLayoutEffect (not useEffect) to update before paint — no visible flicker.
@@ -132,11 +154,6 @@ export const DiffCard = memo(
     }, [expanded]);
     const [selectedLines, setSelectedLines] =
       useState<SelectedLineRange | null>(null);
-
-    const handleToggleStage = useCallback(
-      () => onToggleStage(filePath),
-      [filePath, onToggleStage],
-    );
 
     const parts = filePath.split("/");
     const filename = parts.pop() ?? filePath;
@@ -266,26 +283,17 @@ export const DiffCard = memo(
     );
 
     return (
-      <div ref={ref} className="min-w-0 w-full overflow-clip">
+      <div ref={elementRef} className="min-w-0 w-full overflow-clip">
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full cursor-pointer items-center gap-2.5 border-b border-border/70 bg-muted/30 px-4 py-2.5 text-left"
+            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/70 bg-muted/30 px-4 py-2.5 text-left"
           >
             <IconChevronDown
               className={cn(
-                "size-4 text-muted-foreground transition-transform",
+                "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
                 !isOpen && "-rotate-90",
               )}
-            />
-            <Checkbox
-              checked={stageState === "staged"}
-              indeterminate={stageState === "partial"}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleStage();
-              }}
-              className="size-4"
             />
             <div className="min-w-0 flex-1">
               <p

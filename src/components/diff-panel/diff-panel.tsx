@@ -6,7 +6,7 @@ import type {
 } from "@pierre/diffs";
 import { parseDiffFromFile } from "@pierre/diffs";
 import { DiffToolbar } from "./diff-toolbar";
-import { DiffCard } from "./diff-card";
+import { DiffCard, type DiffCardHandle } from "./diff-card";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import type { FileDiffContents } from "@/hooks/use-diffs";
 import type { ActionType, CommentMetadata } from "@/types/comments";
@@ -118,10 +118,11 @@ export function DiffPanel({
   onClearResolved,
   submittingReview,
 }: DiffPanelProps) {
-  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const cardHandles = useRef<Map<string, DiffCardHandle>>(new Map());
   const refCallbacks = useRef<
-    Map<string, (el: HTMLDivElement | null) => void>
+    Map<string, (handle: DiffCardHandle | null) => void>
   >(new Map());
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   const unstagedPaths = useMemo(
     () => new Set(unstaged.map((f) => f.path)),
@@ -131,11 +132,11 @@ export function DiffPanel({
   const getCardRef = useCallback((path: string) => {
     const existing = refCallbacks.current.get(path);
     if (existing) return existing;
-    const callback = (el: HTMLDivElement | null) => {
-      if (el) {
-        cardRefs.current.set(path, el);
+    const callback = (handle: DiffCardHandle | null) => {
+      if (handle) {
+        cardHandles.current.set(path, handle);
       } else {
-        cardRefs.current.delete(path);
+        cardHandles.current.delete(path);
       }
     };
     refCallbacks.current.set(path, callback);
@@ -150,9 +151,26 @@ export function DiffPanel({
       return;
     }
     lastScrolledRef.current = scrollToPath;
-    const el = cardRefs.current.get(scrollToPath);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    const handle = cardHandles.current.get(scrollToPath);
+    const container = scrollContainerRef.current;
+    if (handle && container) {
+      const el = handle.element;
+      if (handle.isOpen()) {
+        if (el) {
+          const cRect = container.getBoundingClientRect();
+          const eRect = el.getBoundingClientRect();
+          const fullyVisible =
+            eRect.top >= cRect.top && eRect.bottom <= cRect.bottom;
+          if (!fullyVisible) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      } else {
+        handle.expand();
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
     }
     onScrollComplete();
   }, [scrollToPath, onScrollComplete]);
@@ -222,7 +240,7 @@ export function DiffPanel({
         onClearResolved={onClearResolved}
         submittingReview={submittingReview}
       />
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
         {parsedFiles.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">
