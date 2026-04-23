@@ -405,7 +405,7 @@ export const DiffCard = memo(
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger
             render={<button type="button" />}
-            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
+            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
           >
             <IconChevronDown
               className={cn(
