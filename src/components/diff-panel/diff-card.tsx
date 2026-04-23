@@ -29,8 +29,6 @@ import type { ChangeKind } from "@/lib/tauri";
 import { FILE_STATUS, DIFF_ADDITION_COLOR, DIFF_DELETION_COLOR } from "@/lib/status";
 import type { ActionType, CommentMetadata } from "@/types/comments";
 
-type StageState = "staged" | "unstaged" | "partial";
-
 const DIFF_CODE_STYLE = {
   "--diffs-font-family": "'App Mono', monospace",
   "--diffs-font-size": "13px",
@@ -42,7 +40,6 @@ interface DiffCardBaseProps {
   additions: number;
   deletions: number;
   kind: ChangeKind;
-  stageState: StageState;
   diffStyle: "unified" | "split";
   expanded: boolean;
   annotations: DiffLineAnnotation<CommentMetadata>[];
@@ -70,7 +67,6 @@ interface DiffCardBaseProps {
     side: AnnotationSide,
     lineNumber: number,
   ) => void;
-  onToggleStage: (path: string) => void;
 }
 
 type DiffCardProps = DiffCardBaseProps &
@@ -115,7 +111,6 @@ export const DiffCard = memo(
       additions,
       deletions,
       kind,
-      stageState: _stageState,
       diffStyle,
       expanded,
       annotations,
@@ -124,7 +119,6 @@ export const DiffCard = memo(
       onCancelAnnotation,
       onSubmitAnnotation,
       onDeleteAnnotation,
-      onToggleStage: _onToggleStage,
       ...contentProps
     },
     ref,

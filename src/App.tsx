@@ -266,8 +266,6 @@ function App() {
             files={allFiles}
             diffs={diffs}
             loading={loading}
-            stagedPaths={stagedPaths}
-            unstaged={unstagedView}
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}
@@ -284,7 +282,6 @@ function App() {
             onCancelAnnotation={comments.cancelAnnotation}
             onSubmitAnnotation={comments.submitAnnotation}
             onDeleteAnnotation={comments.deleteAnnotation}
-            onToggleStage={handleToggleStage}
             onSubmitReview={handleSubmitReview}
             onClearResolved={comments.clearResolved}
             submittingReview={submittingReview}

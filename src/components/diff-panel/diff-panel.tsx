@@ -15,8 +15,6 @@ interface DiffPanelProps {
   files: FileEntry[];
   diffs: Map<string, FileDiffContents>;
   loading: boolean;
-  stagedPaths: Set<string>;
-  unstaged: FileEntry[];
   diffStyle: "unified" | "split";
   onDiffStyleChange: (style: "unified" | "split") => void;
   allExpanded: boolean;
@@ -52,22 +50,9 @@ interface DiffPanelProps {
     side: AnnotationSide,
     lineNumber: number,
   ) => void;
-  onToggleStage: (path: string) => void;
   onSubmitReview: () => void;
   onClearResolved: () => void;
   submittingReview: boolean;
-}
-
-function getStageState(
-  path: string,
-  stagedPaths: Set<string>,
-  unstagedPaths: Set<string>,
-): "staged" | "unstaged" | "partial" {
-  const isStaged = stagedPaths.has(path);
-  const isUnstaged = unstagedPaths.has(path);
-  if (isStaged && isUnstaged) return "partial";
-  if (isStaged) return "staged";
-  return "unstaged";
 }
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
@@ -95,8 +80,6 @@ export function DiffPanel({
   files,
   diffs,
   loading,
-  stagedPaths,
-  unstaged,
   diffStyle,
   onDiffStyleChange,
   allExpanded,
@@ -113,7 +96,6 @@ export function DiffPanel({
   onCancelAnnotation,
   onSubmitAnnotation,
   onDeleteAnnotation,
-  onToggleStage,
   onSubmitReview,
   onClearResolved,
   submittingReview,
@@ -124,11 +106,6 @@ export function DiffPanel({
   >(new Map());
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const unstagedPaths = useMemo(
-    () => new Set(unstaged.map((f) => f.path)),
-    [unstaged],
-  );
-
   const getCardRef = useCallback((path: string) => {
     const existing = refCallbacks.current.get(path);
     if (existing) return existing;
@@ -137,6 +114,7 @@ export function DiffPanel({
         cardHandles.current.set(path, handle);
       } else {
         cardHandles.current.delete(path);
+        refCallbacks.current.delete(path);
       }
     };
     refCallbacks.current.set(path, callback);
@@ -154,20 +132,18 @@ export function DiffPanel({
     const handle = cardHandles.current.get(scrollToPath);
     const container = scrollContainerRef.current;
     if (handle && container) {
+      const wasOpen = handle.isOpen();
+      if (!wasOpen) handle.expand();
       const el = handle.element;
-      if (handle.isOpen()) {
-        if (el) {
+      if (el) {
+        let shouldScroll = true;
+        if (wasOpen) {
           const cRect = container.getBoundingClientRect();
           const eRect = el.getBoundingClientRect();
-          const fullyVisible =
-            eRect.top >= cRect.top && eRect.bottom <= cRect.bottom;
-          if (!fullyVisible) {
-            el.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
+          shouldScroll =
+            eRect.top < cRect.top || eRect.bottom > cRect.bottom;
         }
-      } else {
-        handle.expand();
-        if (el) {
+        if (shouldScroll) {
           el.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }
@@ -256,11 +232,6 @@ export function DiffPanel({
               additions={parsedFile.additions}
               deletions={parsedFile.deletions}
               kind={parsedFile.kind}
-              stageState={getStageState(
-                parsedFile.filePath,
-                stagedPaths,
-                unstagedPaths,
-              )}
               diffStyle={diffStyle}
               expanded={allExpanded}
               annotations={
@@ -271,7 +242,6 @@ export function DiffPanel({
               onCancelAnnotation={onCancelAnnotation}
               onSubmitAnnotation={onSubmitAnnotation}
               onDeleteAnnotation={onDeleteAnnotation}
-              onToggleStage={onToggleStage}
               {...(parsedFile.contentKind === "text"
                 ? {
                     contentKind: "text" as const,
