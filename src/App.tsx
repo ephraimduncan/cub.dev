@@ -246,7 +246,7 @@ function App() {
         orientation="horizontal"
         className="h-full isolate bg-background"
       >
-        <ResizablePanel defaultSize="22%" minSize="15%" maxSize="35%">
+        <ResizablePanel defaultSize="25%" minSize="25%" maxSize="35%">
           <Sidebar
             workdir={workdir}
             staged={stagedView}
@@ -266,8 +266,6 @@ function App() {
             files={allFiles}
             diffs={diffs}
             loading={loading}
-            stagedPaths={stagedPaths}
-            unstaged={unstagedView}
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}
@@ -284,7 +282,6 @@ function App() {
             onCancelAnnotation={comments.cancelAnnotation}
             onSubmitAnnotation={comments.submitAnnotation}
             onDeleteAnnotation={comments.deleteAnnotation}
-            onToggleStage={handleToggleStage}
             onSubmitReview={handleSubmitReview}
             onClearResolved={comments.clearResolved}
             submittingReview={submittingReview}

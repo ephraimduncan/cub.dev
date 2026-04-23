@@ -33,6 +33,8 @@ const treeStyle: CSSProperties = {
   "--trees-selected-bg-override": "var(--accent)",
   "--trees-selected-fg-override": "var(--accent-foreground)",
   "--trees-border-color-override": "var(--border)",
+  "--trees-padding-inline-override": "6px",
+  "--trees-item-margin-x-override": "0px",
   height: "100%",
 } as CSSProperties;
 
@@ -67,7 +69,7 @@ export function Sidebar({
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden border-r border-border/70 bg-sidebar">
-      <div className="flex h-10 items-center justify-between border-b border-border px-3">
+      <div className="flex h-10 items-center justify-between border-b border-border px-2">
         <p className="truncate text-sm font-medium text-sidebar-foreground">
           {workdir?.replace(/\/+$/, "").split("/").pop() ?? "No repository"}
         </p>
@@ -149,8 +151,7 @@ function Section({
     composition: {
       contextMenu: {
         enabled: true,
-        triggerMode: "both",
-        buttonVisibility: "when-needed",
+        triggerMode: "right-click",
       },
     },
   });
@@ -182,8 +183,7 @@ function Section({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between px-2 py-1">
         <span className="text-xs font-medium text-muted-foreground">
-          {label}{" "}
-          <span className="text-[10px]">({files.length})</span>
+          {label} <span className="text-[10px]">({files.length})</span>
         </span>
         <Button
           variant="ghost"
