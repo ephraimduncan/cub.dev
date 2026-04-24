@@ -18,6 +18,7 @@ import { SidebarContextMenu } from "./sidebar-context-menu";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { join } from "@tauri-apps/api/path";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { perfTimed } from "@/lib/perf";
 
@@ -329,10 +330,9 @@ function Section({
               onRevealInFinder={(p) => {
                 context.close();
                 if (!workdir) return;
-                const abs = `${workdir.replace(/\/+$/, "")}/${p}`;
-                revealItemInDir(abs).catch((e) =>
-                  toast.error(`Reveal failed: ${e}`),
-                );
+                join(workdir, p)
+                  .then(revealItemInDir)
+                  .catch((e) => toast.error(`Reveal failed: ${e}`));
               }}
             />
           )}

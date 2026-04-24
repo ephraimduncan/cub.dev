@@ -6,6 +6,7 @@ import type {
 } from "@pierre/diffs";
 import { parseDiffFromFile } from "@pierre/diffs";
 import { useWorkerPool } from "@pierre/diffs/react";
+import type { WorkerStats } from "@pierre/diffs/worker";
 import { DiffToolbar } from "./diff-toolbar";
 import { DiffCard, type DiffCardHandle } from "./diff-card";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
@@ -28,7 +29,6 @@ interface DiffPanelProps {
   onDiffStyleChange: (style: "unified" | "split") => void;
   allExpanded: boolean;
   onToggleExpandAll: () => void;
-  expandAllTitle?: string;
   expandAllSession: ExpandAllSession | null;
   scrollToPath: string | null;
   scrollNonce: number;
@@ -69,16 +69,17 @@ interface DiffPanelProps {
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
 
-interface WorkerStatsSnapshot {
-  managerState: string;
-  workersFailed: boolean;
-  totalWorkers: number;
-  busyWorkers: number;
-  queuedTasks: number;
-  pendingTasks: number;
-  fileCacheSize: number;
-  diffCacheSize: number;
-}
+type WorkerStatsSnapshot = Pick<
+  WorkerStats,
+  | "managerState"
+  | "workersFailed"
+  | "totalWorkers"
+  | "busyWorkers"
+  | "queuedTasks"
+  | "pendingTasks"
+  | "fileCacheSize"
+  | "diffCacheSize"
+>;
 
 interface ExpandAllSessionMetrics {
   id: number;
@@ -164,7 +165,6 @@ export function DiffPanel({
   onDiffStyleChange,
   allExpanded,
   onToggleExpandAll,
-  expandAllTitle,
   expandAllSession,
   scrollToPath,
   scrollNonce,
@@ -312,7 +312,7 @@ export function DiffPanel({
   );
 
   const parseCacheRef = useRef<
-    WeakMap<FileDiffContents, FileDiffMetadata>
+    WeakMap<FileDiffContents, { fileDiff: FileDiffMetadata; totalLines: number }>
   >(new WeakMap());
 
   const parsedFiles = useMemo(() => {
@@ -345,19 +345,16 @@ export function DiffPanel({
         continue;
       }
 
-      const newLines = contents.newFile.contents
-        ? contents.newFile.contents.split("\n").length
-        : 0;
-      const oldLines = contents.oldFile.contents
-        ? contents.oldFile.contents.split("\n").length
-        : 0;
-      const totalLines = Math.max(newLines, oldLines);
-
-      let fileDiff = cache.get(contents);
-      if (!fileDiff) {
+      let entry = cache.get(contents);
+      if (!entry) {
         const parseStart = performance.now();
-        fileDiff = parseDiffFromFile(contents.oldFile, contents.newFile);
-        cache.set(contents, fileDiff);
+        const fileDiff = parseDiffFromFile(contents.oldFile, contents.newFile);
+        const totalLines = Math.max(
+          fileDiff.additionLines.length,
+          fileDiff.deletionLines.length,
+        );
+        entry = { fileDiff, totalLines };
+        cache.set(contents, entry);
         parseAgg.record(file.path, performance.now() - parseStart, totalLines);
         misses += 1;
       } else {
@@ -367,11 +364,11 @@ export function DiffPanel({
       result.push({
         contentKind: "text",
         filePath: file.path,
-        fileDiff,
+        fileDiff: entry.fileDiff,
         additions: file.additions,
         deletions: file.deletions,
         kind: file.kind,
-        totalLines,
+        totalLines: entry.totalLines,
       });
     }
     perfLog("DiffPanel", "parseLoop", {
@@ -510,7 +507,6 @@ export function DiffPanel({
         onDiffStyleChange={onDiffStyleChange}
         allExpanded={allExpanded}
         onToggleExpandAll={onToggleExpandAll}
-        expandAllTitle={expandAllTitle}
         commentCount={totalCommentCount}
         pendingCount={pendingCount}
         acknowledgedCount={acknowledgedCount}

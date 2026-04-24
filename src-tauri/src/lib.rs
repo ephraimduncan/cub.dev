@@ -21,9 +21,7 @@ pub fn set_launch_path(path: PathBuf) {
 
 #[tauri::command]
 fn get_launch_path() -> Option<String> {
-    LAUNCH_PATH
-        .get()
-        .map(|p| p.to_string_lossy().to_string())
+    LAUNCH_PATH.get().map(|p| p.to_string_lossy().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

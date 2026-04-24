@@ -2,9 +2,7 @@ use std::path::{Component, Path};
 use std::time::Duration;
 
 use notify::{Config, RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{
-    new_debouncer_opt, DebounceEventResult, Debouncer, NoCache,
-};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
 use tauri::{AppHandle, Emitter};
 
 /// Debounced filesystem watcher. Dropping it stops the background thread and
@@ -24,12 +22,9 @@ pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
         None,
         move |result: DebounceEventResult| match result {
             Ok(events) => {
-                let relevant = events.iter().any(|ev| {
-                    ev.event
-                        .paths
-                        .iter()
-                        .any(|p| !path_is_git_internal(p))
-                });
+                let relevant = events
+                    .iter()
+                    .any(|ev| ev.event.paths.iter().any(|p| !path_is_git_internal(p)));
                 if relevant {
                     let _ = app.emit("repo:changed", ());
                 }

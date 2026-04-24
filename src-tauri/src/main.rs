@@ -32,12 +32,7 @@ fn run_mcp_mode() -> ExitCode {
         }
     };
 
-    let spawn = |runtime: &str| {
-        Command::new(runtime)
-            .arg(&script)
-            .arg("mcp")
-            .status()
-    };
+    let spawn = |runtime: &str| Command::new(runtime).arg(&script).arg("mcp").status();
 
     let status = match spawn("node") {
         Ok(s) => s,

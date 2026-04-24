@@ -12,7 +12,6 @@ interface DiffToolbarProps {
   onDiffStyleChange: (style: "unified" | "split") => void;
   allExpanded: boolean;
   onToggleExpandAll: () => void;
-  expandAllTitle?: string;
   commentCount: number;
   pendingCount: number;
   acknowledgedCount: number;
@@ -48,7 +47,6 @@ export function DiffToolbar({
   onDiffStyleChange,
   allExpanded,
   onToggleExpandAll,
-  expandAllTitle,
   commentCount,
   pendingCount,
   acknowledgedCount,
@@ -80,7 +78,7 @@ export function DiffToolbar({
           variant="ghost"
           size="icon-sm"
           onClick={onToggleExpandAll}
-          title={expandAllTitle ?? (allExpanded ? "Collapse All" : "Expand All")}
+          title={allExpanded ? "Collapse All" : "Expand All"}
         >
           {allExpanded ? (
             <IconFold className="size-3.5" />

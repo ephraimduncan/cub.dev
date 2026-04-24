@@ -81,8 +81,8 @@ fn workspace_root() -> Result<PathBuf, String> {
 
 #[cfg(not(debug_assertions))]
 fn workspace_root() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("failed to resolve executable path: {e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("failed to resolve executable path: {e}"))?;
     exe.parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| "failed to resolve workspace root from executable".to_string())
@@ -98,7 +98,11 @@ pub fn sidecar_script_path() -> Result<PathBuf, String> {
     if flat.exists() {
         return Ok(flat);
     }
-    Err(format!("missing sidecar script (checked {} and {})", path.display(), flat.display()))
+    Err(format!(
+        "missing sidecar script (checked {} and {})",
+        path.display(),
+        flat.display()
+    ))
 }
 
 fn read_server_info() -> Result<Option<ServerInfo>, String> {
@@ -108,7 +112,10 @@ fn read_server_info() -> Result<Option<ServerInfo>, String> {
             .map(Some)
             .map_err(|e| format!("invalid server info at {}: {e}", path.display())),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(format!("failed to read server info at {}: {err}", path.display())),
+        Err(err) => Err(format!(
+            "failed to read server info at {}: {err}",
+            path.display()
+        )),
     }
 }
 
@@ -159,7 +166,9 @@ fn wait_for_server_ready(child: &mut Child) -> Result<ServerInfo, String> {
             .try_wait()
             .map_err(|e| format!("failed to poll review server: {e}"))?
         {
-            return Err(format!("review server exited before becoming ready: {status}"));
+            return Err(format!(
+                "review server exited before becoming ready: {status}"
+            ));
         }
 
         if let Some(info) = read_server_info()? {
@@ -182,7 +191,10 @@ fn ensure_server_running(state: &AppState) -> Result<ServerInfo, String> {
     }
 
     {
-        let mut guard = state.bridge.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+        let mut guard = state
+            .bridge
+            .lock()
+            .map_err(|e| format!("lock poisoned: {e}"))?;
         if let Some(child) = guard.as_mut() {
             if child.try_wait().ok().flatten().is_some() {
                 *guard = None;
@@ -194,7 +206,10 @@ fn ensure_server_running(state: &AppState) -> Result<ServerInfo, String> {
     let mut child = spawn_server_process(&script)?;
     let info = wait_for_server_ready(&mut child)?;
 
-    *state.bridge.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(child);
+    *state
+        .bridge
+        .lock()
+        .map_err(|e| format!("lock poisoned: {e}"))? = Some(child);
 
     Ok(info)
 }
@@ -220,9 +235,7 @@ pub fn start_event_listener(
 
             // Build a fresh agent with no global timeout — SSE is long-lived
             let agent = {
-                let config = ureq::Agent::config_builder()
-                    .timeout_global(None)
-                    .build();
+                let config = ureq::Agent::config_builder().timeout_global(None).build();
                 ureq::Agent::new_with_config(config)
             };
 
@@ -230,7 +243,9 @@ pub fn start_event_listener(
                 Ok(resp) => resp,
                 Err(_) => {
                     // Server not ready yet or connection dropped; retry after delay
-                    if stop.load(Ordering::Relaxed) { return; }
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
                     thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -259,7 +274,8 @@ pub fn start_event_listener(
                 } else if line.is_empty() {
                     // End of SSE message — dispatch if we have data
                     if event_name == "comment_status_changed" && !data_buf.is_empty() {
-                        if let Ok(payload) = serde_json::from_str::<CommentStatusChanged>(&data_buf) {
+                        if let Ok(payload) = serde_json::from_str::<CommentStatusChanged>(&data_buf)
+                        {
                             let _ = app_handle.emit("review:comment-updated", &payload);
                         }
                     }
@@ -270,7 +286,9 @@ pub fn start_event_listener(
             }
 
             // If we reach here the connection was lost; reconnect after a delay
-            if stop.load(Ordering::Relaxed) { return; }
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
             thread::sleep(Duration::from_secs(1));
         }
     })
@@ -330,7 +348,9 @@ pub fn submit_review(
         .map_err(|e| format!("failed to read server response: {e}"))?;
 
     if !response.ok {
-        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        let msg = response
+            .error
+            .unwrap_or_else(|| "unknown error".to_string());
         return Err(format!("review server rejected submission: {msg}"));
     }
 
@@ -340,5 +360,8 @@ pub fn submit_review(
 
     let comment_ids = response.comment_ids.unwrap_or_default();
 
-    Ok(SubmitReviewResponse { submitted_count, comment_ids })
+    Ok(SubmitReviewResponse {
+        submitted_count,
+        comment_ids,
+    })
 }

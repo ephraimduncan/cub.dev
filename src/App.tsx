@@ -78,10 +78,12 @@ function App() {
     };
   }, [updateCommentStatus]);
 
+  // Keep a latest-ref for the repo:changed callback so the Tauri subscription
+  // doesn't tear down + re-attach every time `loading` or comment counts
+  // change (which would drop fs events landing during re-subscribe).
+  const repoChangedRef = useRef<() => void>(() => {});
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    const p = listen("repo:changed", () => {
+    repoChangedRef.current = () => {
       if (!workdir) {
         perfLog("App", "fileWatcher:skip", { reason: "no-workdir" });
         return;
@@ -99,8 +101,13 @@ function App() {
           totalCommentCount: comments.totalCommentCount,
         });
       }
-    });
-    p.then((fn) => {
+    };
+  });
+  useEffect(() => {
+    if (!workdir) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen("repo:changed", () => repoChangedRef.current()).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
     });
@@ -108,7 +115,7 @@ function App() {
       cancelled = true;
       unlisten?.();
     };
-  }, [workdir, loading, comments.totalCommentCount, refresh]);
+  }, [workdir]);
 
   useEffect(() => {
     if (!status) return;
@@ -193,7 +200,7 @@ function App() {
     if (!status) return;
     if (autoExpandedRepoRef.current === workdir) return;
     autoExpandedRepoRef.current = workdir;
-    const totalFiles = status.staged.length + status.unstaged.length;
+    const totalFiles = allFiles.length;
     const shouldExpand = totalFiles <= AUTO_EXPAND_FILE_LIMIT;
     perfLog("App", "allExpanded:auto", {
       totalFiles,
@@ -202,7 +209,7 @@ function App() {
     });
     setExpandAllSession(null);
     setAllExpanded(shouldExpand);
-  }, [status, workdir]);
+  }, [allFiles.length, status, workdir]);
 
   const handleToggleExpandAll = useCallback(() => {
     if (allExpanded) {
@@ -236,8 +243,6 @@ function App() {
     expandAllSession?.id,
     loading,
   ]);
-
-  const expandAllTitle = allExpanded ? "Collapse All" : "Expand All";
 
   const handleSelectFile = useCallback((path: string) => {
     setScrollToPath(path);
@@ -453,7 +458,6 @@ function App() {
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}
             onToggleExpandAll={handleToggleExpandAll}
-            expandAllTitle={expandAllTitle}
             expandAllSession={expandAllSession}
             scrollToPath={scrollToPath}
             scrollNonce={scrollNonce}

@@ -36,18 +36,32 @@ export function useDiffs(
   diffsRef.current = diffs;
   const diffSidesRef = useRef(new Map<string, boolean>());
 
+  const requests = useMemo<FileContentsRequest[]>(() => {
+    if (!staged || !unstaged) return [];
+    const seen = new Map<string, boolean>();
+    for (const f of staged) seen.set(f.path, true);
+    for (const f of unstaged) {
+      if (!seen.has(f.path)) seen.set(f.path, false);
+    }
+    const arr: FileContentsRequest[] = Array.from(seen, ([path, isStaged]) => ({
+      path,
+      staged: isStaged,
+    }));
+    arr.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    return arr;
+  }, [staged, unstaged]);
+
   const requestsKey = useMemo(() => {
     if (!staged || !unstaged) return null;
-    const requests = new Map<string, boolean>();
-    for (const f of staged) requests.set(f.path, true);
-    for (const f of unstaged) {
-      if (!requests.has(f.path)) requests.set(f.path, false);
-    }
-    return Array.from(requests.entries())
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([path, isStaged]) => `${isStaged ? "1" : "0"}${path}`)
+    return requests
+      .map((r) => `${r.staged ? "1" : "0"}${r.path}`)
       .join("\0");
-  }, [staged, unstaged]);
+  }, [requests, staged, unstaged]);
+
+  // Latest requests read inside the effect; deps stay on the string key so
+  // the effect only re-runs when the set actually changes.
+  const requestsRef = useRef(requests);
+  requestsRef.current = requests;
 
   useEffect(() => {
     if (requestsKey == null) return;
@@ -59,14 +73,9 @@ export function useDiffs(
       return;
     }
 
-    const requests: FileContentsRequest[] = requestsKey
-      .split("\0")
-      .map((entry) => ({
-        staged: entry[0] === "1",
-        path: entry.slice(1),
-      }));
-    const paths = requests.map((request) => request.path);
-    const pathSet = new Set(paths);
+    const requests = requestsRef.current;
+    const pathSet = new Set<string>();
+    for (const r of requests) pathSet.add(r.path);
     const current = diffsRef.current;
     const currentSides = diffSidesRef.current;
     const missing = requests.filter(
@@ -76,7 +85,7 @@ export function useDiffs(
     );
 
     // Prune entries for paths no longer present.
-    let needsPrune = current.size !== paths.length;
+    let needsPrune = current.size !== pathSet.size;
     if (!needsPrune) {
       for (const p of current.keys()) {
         if (!pathSet.has(p)) {
@@ -97,8 +106,8 @@ export function useDiffs(
     }
 
     perfLog("useDiffs", "effect:run", {
-      totalPaths: paths.length,
-      cached: paths.length - missing.length,
+      totalPaths: pathSet.size,
+      cached: pathSet.size - missing.length,
       missing: missing.length,
       pruned: needsPrune,
     });
@@ -121,39 +130,55 @@ export function useDiffs(
     void getFileContentsBatch(missing)
       .then((results) => {
         if (cancelled) return;
-        setDiffs((prev) => {
-          const next = new Map(prev);
-          for (const result of results) {
-            if (result.response) {
-              okCount += 1;
-              next.set(result.path, toFileDiffContents(result.response));
-              currentSides.set(
-                result.path,
-                requestedSides.get(result.path) ?? false,
-              );
-            } else {
-              errCount += 1;
-              console.warn(
-                "[cub] failed to fetch diff:",
-                result.error ?? result.path,
-              );
-              next.delete(result.path);
-              currentSides.delete(result.path);
-            }
+        // Precompute the side-effects outside the setState updater so React
+        // is free to re-invoke the updater (StrictMode / concurrent) without
+        // double-mutating `currentSides` or double-counting telemetry.
+        const parsed: Array<{ path: string; value: FileDiffContents }> = [];
+        const deleted: string[] = [];
+        for (const result of results) {
+          if (result.response) {
+            okCount += 1;
+            parsed.push({
+              path: result.path,
+              value: toFileDiffContents(result.response),
+            });
+            currentSides.set(
+              result.path,
+              requestedSides.get(result.path) ?? false,
+            );
+          } else {
+            errCount += 1;
+            console.warn(
+              "[cub] failed to fetch diff:",
+              result.error ?? result.path,
+            );
+            deleted.push(result.path);
+            currentSides.delete(result.path);
           }
-          return next;
+        }
+        setDiffs((prev) => {
+          let changed = false;
+          const next = new Map(prev);
+          for (const { path, value } of parsed) {
+            if (next.get(path) !== value) changed = true;
+            next.set(path, value);
+          }
+          for (const path of deleted) {
+            if (next.delete(path)) changed = true;
+          }
+          return changed ? next : prev;
         });
       })
       .catch((err) => {
         if (cancelled) return;
         errCount = missing.length;
         console.warn("[cub] failed to fetch diff batch:", err);
+        for (const request of missing) currentSides.delete(request.path);
         setDiffs((prev) => {
           let changed = false;
           const next = new Map(prev);
           for (const request of missing) {
             if (next.delete(request.path)) changed = true;
-            currentSides.delete(request.path);
           }
           return changed ? next : prev;
         });

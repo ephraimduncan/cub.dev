@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -177,11 +177,7 @@ pub struct RepoStatus {
 /// Open a git repository at `path` and store it in app state.
 /// Returns the absolute workdir path on success.
 #[tauri::command]
-pub fn open_repo(
-    path: String,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<String, String> {
+pub fn open_repo(path: String, app: AppHandle, state: State<AppState>) -> Result<String, String> {
     let total_start = Instant::now();
     perf_event(&app, "open_repo:start", json!({ "path": &path }));
 
@@ -331,7 +327,9 @@ fn count_diff_lines_parallel(
                     };
                     let mut counts = HashMap::new();
                     for idx in start..end {
-                        let Some(delta) = diff.get_delta(idx) else { continue };
+                        let Some(delta) = diff.get_delta(idx) else {
+                            continue;
+                        };
                         let Some(path) = delta
                             .new_file()
                             .path()
@@ -371,75 +369,99 @@ fn count_diff_lines_parallel(
 }
 
 #[tauri::command]
-pub fn get_repo_status(
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<RepoStatus, String> {
+pub fn get_repo_status(app: AppHandle, state: State<AppState>) -> Result<RepoStatus, String> {
     let total_start = Instant::now();
-    let lock_start = Instant::now();
-    let lock = state
-        .repo
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))?;
-    let lock_ms = ms_since(lock_start);
-    let repo = lock.as_ref().ok_or("no repository open")?;
-    let workdir_path = repo.workdir().ok_or("bare repository")?.to_path_buf();
+    let (
+        status_entries,
+        statuses_count,
+        staged_counts,
+        unstaged_counts,
+        lock_ms,
+        statuses_ms,
+        staged_diff_ms,
+        unstaged_diff_ms,
+        staged_count_ms,
+        unstaged_count_ms,
+    ) = {
+        let lock_start = Instant::now();
+        let lock = state
+            .repo
+            .lock()
+            .map_err(|e| format!("lock poisoned: {e}"))?;
+        let lock_ms = ms_since(lock_start);
+        let repo = lock.as_ref().ok_or("no repository open")?;
+        let workdir_path = repo.workdir().ok_or("bare repository")?.to_path_buf();
 
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
+        let mut opts = StatusOptions::new();
+        opts.include_untracked(true).recurse_untracked_dirs(true);
 
-    let statuses_start = Instant::now();
-    let statuses = repo
-        .statuses(Some(&mut opts))
-        .map_err(|e| format!("failed to get status: {e}"))?;
-    let statuses_ms = ms_since(statuses_start);
-    let statuses_count = statuses.len();
+        let statuses_start = Instant::now();
+        let statuses = repo
+            .statuses(Some(&mut opts))
+            .map_err(|e| format!("failed to get status: {e}"))?;
+        let statuses_ms = ms_since(statuses_start);
+        let statuses_count = statuses.len();
+        let status_entries: Vec<(String, Status)> = statuses
+            .iter()
+            .filter_map(|entry| entry.path().map(|p| (p.to_string(), entry.status())))
+            .collect();
 
-    let head_tree = repo
-        .revparse_single("HEAD^{tree}")
-        .ok()
-        .and_then(|obj| obj.into_tree().ok());
+        let head_tree = repo
+            .revparse_single("HEAD^{tree}")
+            .ok()
+            .and_then(|obj| obj.into_tree().ok());
+        let head_tree_oid = head_tree.as_ref().map(|t| t.id());
 
-    let staged_diff_start = Instant::now();
-    let staged_diff = repo
-        .diff_tree_to_index(head_tree.as_ref(), None, None)
-        .map_err(|e| format!("failed to diff staged: {e}"))?;
-    let staged_diff_ms = ms_since(staged_diff_start);
+        let staged_diff_start = Instant::now();
+        let staged_diff = repo
+            .diff_tree_to_index(head_tree.as_ref(), None, None)
+            .map_err(|e| format!("failed to diff staged: {e}"))?;
+        let staged_diff_ms = ms_since(staged_diff_start);
+        let staged_delta_count = staged_diff.deltas().count();
 
-    let staged_count_start = Instant::now();
-    let staged_counts = count_diff_lines_parallel(
-        &workdir_path,
-        CountDiffKind::StagedAgainstHead(head_tree.as_ref().map(|t| t.id())),
-        staged_diff.deltas().count(),
-    );
-    let staged_count_ms = ms_since(staged_count_start);
+        let unstaged_diff_start = Instant::now();
+        let unstaged_diff = repo
+            .diff_index_to_workdir(None, None)
+            .map_err(|e| format!("failed to diff unstaged: {e}"))?;
+        let unstaged_diff_ms = ms_since(unstaged_diff_start);
+        let unstaged_delta_count = unstaged_diff.deltas().count();
 
-    let unstaged_diff_start = Instant::now();
-    let unstaged_diff = repo
-        .diff_index_to_workdir(None, None)
-        .map_err(|e| format!("failed to diff unstaged: {e}"))?;
-    let unstaged_diff_ms = ms_since(unstaged_diff_start);
+        // Count line stats while holding the repo lock so a concurrent
+        // `open_repo` cannot swap `state.repo` and let a stale snapshot land
+        // on top of a freshly opened repository.
+        let staged_count_start = Instant::now();
+        let staged_counts = count_diff_lines_parallel(
+            &workdir_path,
+            CountDiffKind::StagedAgainstHead(head_tree_oid),
+            staged_delta_count,
+        );
+        let staged_count_ms = ms_since(staged_count_start);
 
-    let unstaged_count_start = Instant::now();
-    let unstaged_counts = count_diff_lines_parallel(
-        &workdir_path,
-        CountDiffKind::Unstaged,
-        unstaged_diff.deltas().count(),
-    );
-    let unstaged_count_ms = ms_since(unstaged_count_start);
+        let unstaged_count_start = Instant::now();
+        let unstaged_counts =
+            count_diff_lines_parallel(&workdir_path, CountDiffKind::Unstaged, unstaged_delta_count);
+        let unstaged_count_ms = ms_since(unstaged_count_start);
+
+        (
+            status_entries,
+            statuses_count,
+            staged_counts,
+            unstaged_counts,
+            lock_ms,
+            statuses_ms,
+            staged_diff_ms,
+            unstaged_diff_ms,
+            staged_count_ms,
+            unstaged_count_ms,
+        )
+    };
 
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
 
     let classify_start = Instant::now();
-    for entry in statuses.iter() {
-        let path = match entry.path() {
-            Some(p) => p.to_string(),
-            None => continue,
-        };
-        let s = entry.status();
-
+    for (path, s) in status_entries {
         if s.intersects(
             git2::Status::INDEX_NEW
                 | git2::Status::INDEX_MODIFIED
@@ -458,10 +480,7 @@ pub fn get_repo_status(
             } else {
                 ChangeKind::Typechange
             };
-            let (additions, deletions) = staged_counts
-                .get(&path)
-                .copied()
-                .unwrap_or((0, 0));
+            let (additions, deletions) = staged_counts.get(&path).copied().unwrap_or((0, 0));
             staged.push(FileEntry {
                 path: path.clone(),
                 kind,
@@ -485,10 +504,7 @@ pub fn get_repo_status(
             } else {
                 ChangeKind::Typechange
             };
-            let (additions, deletions) = unstaged_counts
-                .get(&path)
-                .copied()
-                .unwrap_or((0, 0));
+            let (additions, deletions) = unstaged_counts.get(&path).copied().unwrap_or((0, 0));
             unstaged.push(FileEntry {
                 path: path.clone(),
                 kind,
@@ -615,16 +631,21 @@ fn read_tree_file(
     Ok(decode_file_side(blob.content()))
 }
 
+fn validate_repo_relative_path(path: &Path) -> Result<(), String> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => return Err(format!("invalid path: {}", path.display())),
+        }
+    }
+    Ok(())
+}
+
 fn read_workdir_file(workdir: &Path, path: &Path) -> Result<FileSideContent, String> {
     // Reject anything other than normal/cur-dir components so we never escape
     // the workdir. Avoids the per-file `canonicalize()` (5+ stat syscalls per
     // path) that previously dominated `get_file_contents_batch:readMs`.
-    for component in path.components() {
-        match component {
-            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
-            _ => return Err(format!("invalid path: {}", path.display())),
-        }
-    }
+    validate_repo_relative_path(path)?;
     let abs = workdir.join(path);
     // Component filter blocks `..` but not symlinks; a tracked file like
     // `evil.txt -> /etc/passwd` would otherwise be followed by `fs::read`.
@@ -722,8 +743,7 @@ pub fn get_file_contents_batch(
                                     .collect();
                             }
                         };
-                        let head_tree =
-                            head_tree_oid.and_then(|oid| repo.find_tree(oid).ok());
+                        let head_tree = head_tree_oid.and_then(|oid| repo.find_tree(oid).ok());
                         let chunk_needs_index = chunk.iter().any(|r| r.staged);
                         let index = if chunk_needs_index {
                             repo.index().ok()
@@ -1011,24 +1031,12 @@ pub fn discard_file(path: String, state: State<AppState>) -> Result<(), String> 
     let workdir = repo.workdir().ok_or("bare repository")?;
 
     let relative_path = Path::new(&path);
-    let canonical_workdir = workdir
-        .canonicalize()
-        .map_err(|e| format!("cannot canonicalize workdir: {e}"))?;
-    let target = canonical_workdir.join(relative_path);
-    let safe_target = if target.exists() {
-        target
-            .canonicalize()
-            .map_err(|e| format!("cannot canonicalize target: {e}"))?
-    } else {
-        let parent = target.parent().ok_or("invalid path")?;
-        let parent_canonical = parent
-            .canonicalize()
-            .map_err(|e| format!("cannot canonicalize parent: {e}"))?;
-        parent_canonical.join(target.file_name().unwrap_or_default())
-    };
-    if !safe_target.starts_with(&canonical_workdir) {
-        return Err("path traversal detected".to_string());
-    }
+    validate_repo_relative_path(relative_path)?;
+    // Containment check: `validate_repo_relative_path` only rejects syntactic
+    // `..`/absolute components; a symlinked parent inside the workdir would
+    // otherwise let `checkout_head` or removal escape the repo. Canonicalize
+    // workdir + (target or parent) and require `starts_with(canonical_workdir)`.
+    let target = canonical_contained_target(workdir, relative_path)?;
 
     let status = repo
         .status_file(relative_path)
@@ -1043,13 +1051,7 @@ pub fn discard_file(path: String, state: State<AppState>) -> Result<(), String> 
 
     // Pure untracked file or directory: remove from disk, no git state to touch.
     if status.contains(Status::WT_NEW) && !index_dirty {
-        if safe_target.is_dir() {
-            std::fs::remove_dir_all(&safe_target)
-                .map_err(|e| format!("remove failed: {e}"))?;
-        } else if safe_target.exists() {
-            std::fs::remove_file(&safe_target)
-                .map_err(|e| format!("remove failed: {e}"))?;
-        }
+        remove_workdir_entry(&target)?;
         return Ok(());
     }
 
@@ -1092,15 +1094,49 @@ pub fn discard_file(path: String, state: State<AppState>) -> Result<(), String> 
                 | Status::INDEX_TYPECHANGE,
         );
         if post.contains(Status::WT_NEW) && !post_index_dirty {
-            if safe_target.is_dir() {
-                std::fs::remove_dir_all(&safe_target).ok();
-            } else if safe_target.exists() {
-                std::fs::remove_file(&safe_target).ok();
-            }
+            let _ = remove_workdir_entry(&target);
         }
     }
 
     Ok(())
+}
+
+// Single-stat removal: classify file-vs-dir-vs-missing atomically, then act.
+// Avoids the TOCTOU `exists()` → `is_dir()` → `exists()` chain.
+fn remove_workdir_entry(target: &Path) -> Result<(), String> {
+    let meta = match std::fs::symlink_metadata(target) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("cannot stat {}: {e}", target.display())),
+    };
+    let ft = meta.file_type();
+    if ft.is_dir() {
+        std::fs::remove_dir_all(target).map_err(|e| format!("remove failed: {e}"))
+    } else {
+        std::fs::remove_file(target).map_err(|e| format!("remove failed: {e}"))
+    }
+}
+
+fn canonical_contained_target(workdir: &Path, relative_path: &Path) -> Result<PathBuf, String> {
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize workdir: {e}"))?;
+    let target = canonical_workdir.join(relative_path);
+    let safe_target = if target.exists() {
+        target
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize target: {e}"))?
+    } else {
+        let parent = target.parent().ok_or("invalid path")?;
+        let parent_canonical = parent
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize parent: {e}"))?;
+        parent_canonical.join(target.file_name().unwrap_or_default())
+    };
+    if !safe_target.starts_with(&canonical_workdir) {
+        return Err("path traversal detected".to_string());
+    }
+    Ok(safe_target)
 }
 
 #[tauri::command]
@@ -1148,10 +1184,9 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
             repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
                 .map_err(|e| format!("failed to create commit: {e}"))?
         }
-        Err(_) => {
-            repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
-                .map_err(|e| format!("failed to create initial commit: {e}"))?
-        }
+        Err(_) => repo
+            .commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
+            .map_err(|e| format!("failed to create initial commit: {e}"))?,
     };
 
     Ok(oid.to_string())
@@ -1288,11 +1323,7 @@ pub fn cleanup_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn init_repo(
-    path: String,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<String, String> {
+pub fn init_repo(path: String, app: AppHandle, state: State<AppState>) -> Result<String, String> {
     std::fs::create_dir_all(&path).map_err(|e| format!("mkdir failed: {e}"))?;
     let repo = Repository::init(&path).map_err(|e| format!("init failed: {e}"))?;
     let workdir_path = repo

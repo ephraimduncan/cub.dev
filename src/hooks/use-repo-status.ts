@@ -79,7 +79,8 @@ export function useRepoStatus(): UseRepoStatusReturn {
   const [status, setStatus] = useState<MergedRepoStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fingerprintRef = useRef("");
-  const refreshInflightRef = useRef(0);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const pendingRefreshRef = useRef(false);
 
   const applyStatus = useCallback((merged: MergedRepoStatus) => {
     const fp = statusFingerprint(merged);
@@ -101,29 +102,39 @@ export function useRepoStatus(): UseRepoStatusReturn {
   }, []);
 
   const refresh = useCallback(async () => {
-    refreshInflightRef.current += 1;
-    const inflight = refreshInflightRef.current;
-    if (inflight > 1) {
-      perfLog("useRepoStatus", "refresh:overlap", { inflight });
+    if (refreshPromiseRef.current) {
+      pendingRefreshRef.current = true;
+      perfLog("useRepoStatus", "refresh:coalesce");
+      return refreshPromiseRef.current;
     }
-    try {
-      setError(null);
-      const raw = await perfTimedAsync(
-        "useRepoStatus",
-        "refresh:getRepoStatus",
-        () => getRepoStatus(),
-      );
-      perfLog("useRepoStatus", "refresh:raw", {
-        staged: raw.staged.length,
-        unstaged: raw.unstaged.length,
-        untracked: raw.untracked.length,
-      });
-      applyStatus(mergeStatus(raw));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      refreshInflightRef.current -= 1;
-    }
+
+    const promise = (async () => {
+      try {
+        do {
+          pendingRefreshRef.current = false;
+          try {
+            setError(null);
+            const raw = await perfTimedAsync(
+              "useRepoStatus",
+              "refresh:getRepoStatus",
+              () => getRepoStatus(),
+            );
+            perfLog("useRepoStatus", "refresh:raw", {
+              staged: raw.staged.length,
+              unstaged: raw.unstaged.length,
+              untracked: raw.untracked.length,
+            });
+            applyStatus(mergeStatus(raw));
+          } catch (e) {
+            setError(String(e));
+          }
+        } while (pendingRefreshRef.current);
+      } finally {
+        refreshPromiseRef.current = null;
+      }
+    })();
+    refreshPromiseRef.current = promise;
+    return promise;
   }, [applyStatus]);
 
   const open = useCallback(
