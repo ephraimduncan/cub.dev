@@ -149,12 +149,13 @@ export function useDiffs(
         errCount = missing.length;
         console.warn("[cub] failed to fetch diff batch:", err);
         setDiffs((prev) => {
+          let changed = false;
           const next = new Map(prev);
           for (const request of missing) {
-            next.delete(request.path);
+            if (next.delete(request.path)) changed = true;
             currentSides.delete(request.path);
           }
-          return next;
+          return changed ? next : prev;
         });
       })
       .finally(() => {
