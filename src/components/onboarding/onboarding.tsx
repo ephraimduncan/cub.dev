@@ -8,7 +8,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { openRepo as openRepoCmd } from "@/lib/tauri";
+import { perfLog, perfTimedAsync } from "@/lib/perf";
 import { useRecentRepos } from "@/hooks/use-recent-repos";
 import { useRecentBranches } from "@/hooks/use-recent-branches";
 import { CloneDialog } from "@/components/onboarding/clone-dialog";
@@ -39,9 +39,13 @@ export function Onboarding({ onOpened }: OnboardingProps) {
 
   const openPath = async (path: string) => {
     try {
-      await openRepoCmd(path);
+      await perfTimedAsync(
+        "Onboarding",
+        "openPath:onOpened",
+        () => Promise.resolve(onOpened(path)),
+        { path },
+      );
       addRecent(path);
-      await onOpened(path);
     } catch (e) {
       toast.error(`Failed to open: ${e}`);
     }
@@ -50,7 +54,12 @@ export function Onboarding({ onOpened }: OnboardingProps) {
   const handleOpenLocal = async () => {
     try {
       const selected = await openDialog({ directory: true, multiple: false });
-      if (typeof selected === "string") await openPath(selected);
+      if (typeof selected !== "string") {
+        perfLog("Onboarding", "openLocal:cancel");
+        return;
+      }
+      perfLog("Onboarding", "openLocal:selected", { path: selected });
+      await openPath(selected);
     } catch (e) {
       toast.error(`Open failed: ${e}`);
     }

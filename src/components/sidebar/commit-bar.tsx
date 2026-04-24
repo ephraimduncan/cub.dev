@@ -19,7 +19,7 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
   };
 
   return (
-    <div className="space-y-2 border-t border-border/70 p-3">
+    <div className="space-y-2 border-t border-border p-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">
           Commit
@@ -33,7 +33,7 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
         placeholder="Commit message"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        className="min-h-20 resize-none border-border/50 bg-background text-sm shadow-none"
+        className="min-h-20 resize-none border-border bg-transparent text-sm shadow-none"
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();

@@ -8,14 +8,29 @@ import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { DiffPanel } from "@/components/diff-panel/diff-panel";
 import { Onboarding } from "@/components/onboarding/onboarding";
-import { useRepoStatus } from "@/hooks/use-repo-status";
+import {
+  clearLastOpenedRepo,
+  readLastOpenedRepo,
+  useRepoStatus,
+} from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
-import { useFileWatcher } from "@/hooks/use-file-watcher";
-import { stageFile, unstageFile, stageAll, unstageAll, commit, submitReview, type FileEntry } from "@/lib/tauri";
+import { ask } from "@tauri-apps/plugin-dialog";
+import {
+  stageFile,
+  unstageFile,
+  stageAll,
+  unstageAll,
+  commit,
+  submitReview,
+  discardFile,
+  getLaunchPath,
+  type FileEntry,
+} from "@/lib/tauri";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import type { CommentStatus } from "@/types/comments";
+import { perfLog, perfLogJson, type ExpandAllSession } from "@/lib/perf";
 
 interface CommentStatusPayload {
   review_id: string;
@@ -25,46 +40,108 @@ interface CommentStatusPayload {
   dismiss_reason: string | null;
 }
 
+const AUTO_EXPAND_FILE_LIMIT = 100;
+
 function App() {
   const { workdir, status, error, refresh, open, close } = useRepoStatus();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
-  const [allExpanded, setAllExpanded] = useState(true);
+  const [allExpanded, setAllExpanded] = useState(false);
+  const [expandAllSession, setExpandAllSession] =
+    useState<ExpandAllSession | null>(null);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
+  const [scrollNonce, setScrollNonce] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [optimisticStage, setOptimisticStage] = useState<Map<string, boolean>>(
     new Map(),
   );
+  const expandSessionIdRef = useRef(0);
+  const restoreOpenStartedRef = useRef(false);
 
   // Listen for real-time comment status updates from the Tauri event bridge
   const { updateCommentStatus } = comments;
   useEffect(() => {
-    const promise = listen<CommentStatusPayload>("review:comment-updated", (event) => {
-      updateCommentStatus(
-        event.payload.comment_id,
-        event.payload.status,
-        event.payload.summary,
-        event.payload.dismiss_reason,
-      );
-    });
+    const promise = listen<CommentStatusPayload>(
+      "review:comment-updated",
+      (event) => {
+        updateCommentStatus(
+          event.payload.comment_id,
+          event.payload.status,
+          event.payload.summary,
+          event.payload.dismiss_reason,
+        );
+      },
+    );
     return () => {
       promise.then((unlisten) => unlisten());
     };
   }, [updateCommentStatus]);
 
-  useFileWatcher(
-    useCallback(() => {
-      if (comments.totalCommentCount === 0) {
-        refresh();
+  // Keep a latest-ref for the repo:changed callback so the Tauri subscription
+  // doesn't tear down + re-attach every time `loading` or comment counts
+  // change (which would drop fs events landing during re-subscribe).
+  const repoChangedRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    repoChangedRef.current = () => {
+      if (!workdir) {
+        perfLog("App", "fileWatcher:skip", { reason: "no-workdir" });
+        return;
       }
-    }, [comments.totalCommentCount, refresh]),
-  );
+      if (loading) {
+        perfLog("App", "fileWatcher:skip", { reason: "diffs-loading" });
+        return;
+      }
+      if (comments.totalCommentCount === 0) {
+        perfLog("App", "fileWatcher:tick");
+        refresh();
+      } else {
+        perfLog("App", "fileWatcher:skip", {
+          reason: "open-comments",
+          totalCommentCount: comments.totalCommentCount,
+        });
+      }
+    };
+  });
+  useEffect(() => {
+    if (!workdir) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen("repo:changed", () => repoChangedRef.current()).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [workdir]);
+
+  useEffect(() => {
+    if (!status) return;
+    perfLog("App", "status:apply", {
+      staged: status.staged.length,
+      unstaged: status.unstaged.length,
+      total: status.staged.length + status.unstaged.length,
+    });
+  }, [status]);
+
+  useEffect(() => {
+    perfLog("App", "diffs:change", {
+      diffCount: diffs.size,
+      loading,
+    });
+  }, [diffs, loading]);
+
+  useEffect(() => {
+    perfLog("App", "allExpanded:change", { allExpanded });
+  }, [allExpanded]);
 
   // Apply optimistic stage toggles to the raw staged/unstaged lists so the
   // sidebar sections reshuffle instantly without waiting for the backend.
   const { stagedView, unstagedView } = useMemo(() => {
-    if (!status) return { stagedView: [] as FileEntry[], unstagedView: [] as FileEntry[] };
+    if (!status)
+      return { stagedView: [] as FileEntry[], unstagedView: [] as FileEntry[] };
     if (optimisticStage.size === 0) {
       return { stagedView: status.staged, unstagedView: status.unstaged };
     }
@@ -113,8 +190,63 @@ function App() {
     return files;
   }, [status]);
 
+  const autoExpandedRepoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workdir) {
+      autoExpandedRepoRef.current = null;
+      setExpandAllSession(null);
+      return;
+    }
+    if (!status) return;
+    if (autoExpandedRepoRef.current === workdir) return;
+    autoExpandedRepoRef.current = workdir;
+    const totalFiles = allFiles.length;
+    const shouldExpand = totalFiles <= AUTO_EXPAND_FILE_LIMIT;
+    perfLog("App", "allExpanded:auto", {
+      totalFiles,
+      shouldExpand,
+      limit: AUTO_EXPAND_FILE_LIMIT,
+    });
+    setExpandAllSession(null);
+    setAllExpanded(shouldExpand);
+  }, [allFiles.length, status, workdir]);
+
+  const handleToggleExpandAll = useCallback(() => {
+    if (allExpanded) {
+      perfLogJson("ExpandAll", "collapseClick", {
+        activeSessionId: expandAllSession?.id ?? null,
+        totalFiles: allFiles.length,
+      });
+      setExpandAllSession(null);
+      setAllExpanded(false);
+      return;
+    }
+    const nextSession: ExpandAllSession = {
+      id: ++expandSessionIdRef.current,
+      startedAt: performance.now(),
+      requestedFileCount: allFiles.length,
+    };
+    perfLogJson("ExpandAll", "click", {
+      sessionId: nextSession.id,
+      totalFiles: allFiles.length,
+      loadedDiffs: diffs.size,
+      loading,
+      diffStyle,
+    });
+    setExpandAllSession(nextSession);
+    setAllExpanded(true);
+  }, [
+    allExpanded,
+    allFiles.length,
+    diffStyle,
+    diffs.size,
+    expandAllSession?.id,
+    loading,
+  ]);
+
   const handleSelectFile = useCallback((path: string) => {
     setScrollToPath(path);
+    setScrollNonce((n) => n + 1);
   }, []);
 
   const handleScrollComplete = useCallback(() => {
@@ -201,6 +333,24 @@ function App() {
     [refresh],
   );
 
+  const handleDiscardFile = useCallback(
+    async (path: string) => {
+      const ok = await ask(
+        `Discard changes to ${path}? This cannot be undone.`,
+        { title: "Discard changes", kind: "warning" },
+      );
+      if (!ok) return;
+      try {
+        await discardFile(path);
+        await refresh();
+        toast.success(`Discarded ${path}`);
+      } catch (e) {
+        toast.error(`Discard failed: ${e}`);
+      }
+    },
+    [refresh],
+  );
+
   const { collectAllComments, markSubmitted } = comments;
   const submittingRef = useRef(false);
 
@@ -225,21 +375,36 @@ function App() {
     }
   }, [collectAllComments, markSubmitted]);
 
-  const handleOnboardingOpen = useCallback(
-    async (path: string) => {
-      try {
-        await open(path);
-      } catch (e) {
-        toast.error(`Failed to open: ${e}`);
-      }
-    },
-    [open],
-  );
+  // Honor `cub [path]` first; otherwise restore the last successfully opened repo.
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    let cancelled = false;
+    getLaunchPath()
+      .then((launchPath) => {
+        if (cancelled) return;
+        const restorePath = launchPath ?? readLastOpenedRepo();
+        if (!restorePath || restoreOpenStartedRef.current) return;
+        restoreOpenStartedRef.current = true;
+        perfLog("App", "open:restore", {
+          source: launchPath ? "launchPath" : "lastOpened",
+          path: restorePath,
+        });
+        openRef.current(restorePath).catch((e) => {
+          if (!launchPath) clearLastOpenedRepo();
+          toast.error(`Failed to open: ${e}`);
+        });
+      })
+      .catch((e) => console.error("[cub] getLaunchPath failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (!workdir) {
     return (
       <>
-        <Onboarding onOpened={handleOnboardingOpen} />
+        <Onboarding onOpened={open} />
         <Toaster />
       </>
     );
@@ -265,9 +430,9 @@ function App() {
     <>
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full isolate border-t border-border/70 bg-background"
+        className="h-full isolate border-t border-border bg-background"
       >
-        <ResizablePanel defaultSize="25%" minSize="25%" maxSize="35%">
+        <ResizablePanel defaultSize="25%" minSize={300} maxSize={400}>
           <Sidebar
             workdir={workdir}
             staged={stagedView}
@@ -280,6 +445,7 @@ function App() {
             onUnstageAll={handleUnstageAll}
             onCommit={handleCommit}
             onCloseRepo={close}
+            onDiscardFile={handleDiscardFile}
           />
         </ResizablePanel>
         <ResizableHandle />
@@ -291,8 +457,10 @@ function App() {
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             allExpanded={allExpanded}
-            onToggleExpandAll={() => setAllExpanded((prev) => !prev)}
+            onToggleExpandAll={handleToggleExpandAll}
+            expandAllSession={expandAllSession}
             scrollToPath={scrollToPath}
+            scrollNonce={scrollNonce}
             onScrollComplete={handleScrollComplete}
             annotationsByFile={comments.annotationsByFile}
             hasOpenForm={comments.hasOpenForm}

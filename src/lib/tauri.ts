@@ -36,11 +36,21 @@ export interface FileContentsResponse {
   new_binary: boolean;
 }
 
-export function getFileContents(
-  path: string,
-  staged = false,
-): Promise<FileContentsResponse> {
-  return invoke<FileContentsResponse>("get_file_contents", { path, staged });
+export interface FileContentsRequest {
+  path: string;
+  staged: boolean;
+}
+
+export interface FileContentsBatchItem {
+  path: string;
+  response: FileContentsResponse | null;
+  error: string | null;
+}
+
+export function getFileContentsBatch(
+  requests: FileContentsRequest[],
+): Promise<FileContentsBatchItem[]> {
+  return invoke<FileContentsBatchItem[]>("get_file_contents_batch", { requests });
 }
 
 export function stageFile(path: string): Promise<void> {
@@ -112,4 +122,12 @@ export function initRepo(path: string): Promise<string> {
 
 export function getRepoBranch(path: string): Promise<string | null> {
   return invoke<string | null>("get_repo_branch", { path });
+}
+
+export function discardFile(path: string): Promise<void> {
+  return invoke<void>("discard_file", { path });
+}
+
+export function getLaunchPath(): Promise<string | null> {
+  return invoke<string | null>("get_launch_path");
 }
