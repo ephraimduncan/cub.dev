@@ -8,7 +8,11 @@ import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { DiffPanel } from "@/components/diff-panel/diff-panel";
 import { Onboarding } from "@/components/onboarding/onboarding";
-import { useRepoStatus } from "@/hooks/use-repo-status";
+import {
+  clearLastOpenedRepo,
+  readLastOpenedRepo,
+  useRepoStatus,
+} from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -53,6 +57,7 @@ function App() {
     new Map(),
   );
   const expandSessionIdRef = useRef(0);
+  const restoreOpenStartedRef = useRef(false);
 
   // Listen for real-time comment status updates from the Tauri event bridge
   const { updateCommentStatus } = comments;
@@ -365,26 +370,25 @@ function App() {
     }
   }, [collectAllComments, markSubmitted]);
 
-  const handleOnboardingOpen = useCallback(
-    async (path: string) => {
-      try {
-        await open(path);
-      } catch (e) {
-        toast.error(`Failed to open: ${e}`);
-      }
-    },
-    [open],
-  );
-
-  // Honor `cub [path]` from the command line: auto-open on first mount.
+  // Honor `cub [path]` first; otherwise restore the last successfully opened repo.
   const openRef = useRef(open);
   openRef.current = open;
   useEffect(() => {
     let cancelled = false;
     getLaunchPath()
-      .then((p) => {
-        if (cancelled || !p) return;
-        openRef.current(p).catch((e) => toast.error(`Failed to open: ${e}`));
+      .then((launchPath) => {
+        if (cancelled) return;
+        const restorePath = launchPath ?? readLastOpenedRepo();
+        if (!restorePath || restoreOpenStartedRef.current) return;
+        restoreOpenStartedRef.current = true;
+        perfLog("App", "open:restore", {
+          source: launchPath ? "launchPath" : "lastOpened",
+          path: restorePath,
+        });
+        openRef.current(restorePath).catch((e) => {
+          if (!launchPath) clearLastOpenedRepo();
+          toast.error(`Failed to open: ${e}`);
+        });
       })
       .catch((e) => console.error("[cub] getLaunchPath failed:", e));
     return () => {
@@ -395,7 +399,7 @@ function App() {
   if (!workdir) {
     return (
       <>
-        <Onboarding onOpened={handleOnboardingOpen} />
+        <Onboarding onOpened={open} />
         <Toaster />
       </>
     );

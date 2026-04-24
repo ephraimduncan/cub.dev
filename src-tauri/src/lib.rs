@@ -5,7 +5,7 @@ mod watcher;
 use git::AppState;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Manager;
 
@@ -40,6 +40,7 @@ pub fn run() {
             event_listener_stop: stop_flag.clone(),
             clone_cancels: Mutex::new(HashMap::new()),
             watcher: Mutex::new(None),
+            watcher_generation: AtomicU64::new(0),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -63,7 +64,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             git::open_repo,
             git::get_repo_status,
-            git::get_file_contents,
+            git::get_file_contents_batch,
             git::stage_file,
             git::unstage_file,
             git::stage_all,

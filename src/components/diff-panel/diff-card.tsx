@@ -69,6 +69,7 @@ interface DiffCardBaseProps {
   expandAllSession: ExpandAllSession | null;
   onExpandAllMetric: (metric: ExpandAllCardMetric) => void;
   annotations: DiffLineAnnotation<CommentMetadata>[];
+  totalLines: number;
   hasOpenForm: boolean;
   onAddAnnotation: (
     filePath: string,
@@ -147,6 +148,7 @@ export const DiffCard = memo(
       onCancelAnnotation,
       onSubmitAnnotation,
       onDeleteAnnotation,
+      totalLines,
       ...contentProps
     },
     ref,
@@ -167,7 +169,7 @@ export const DiffCard = memo(
 
     useEffect(() => {
       const ms = performance.now() - mountStartRef.current;
-      mountAgg.record(filePath, ms);
+      mountAgg.record(filePath, ms, totalLines);
       scheduleFlush();
       // Only fire on mount.
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -175,7 +177,7 @@ export const DiffCard = memo(
 
     useLayoutEffect(() => {
       const ms = performance.now() - renderStartRef.current;
-      renderAgg.record(filePath, ms);
+      renderAgg.record(filePath, ms, totalLines);
       scheduleFlush();
     });
 

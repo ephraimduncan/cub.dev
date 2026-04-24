@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  getFileContents,
+  getFileContentsBatch,
+  type FileContentsRequest,
   type FileContentsResponse,
   type FileEntry,
 } from "@/lib/tauri";
-import { createPerfAggregator, perfLog } from "@/lib/perf";
+import { perfLog } from "@/lib/perf";
 
 type TextFileDiffContents = {
   kind: "text";
@@ -33,28 +34,46 @@ export function useDiffs(
   const [loading, setLoading] = useState(false);
   const diffsRef = useRef(diffs);
   diffsRef.current = diffs;
+  const diffSidesRef = useRef(new Map<string, boolean>());
 
-  const pathsKey = useMemo(() => {
+  const requestsKey = useMemo(() => {
     if (!staged || !unstaged) return null;
-    const set = new Set<string>();
-    for (const f of staged) set.add(f.path);
-    for (const f of unstaged) set.add(f.path);
-    return Array.from(set).sort().join("\0");
+    const requests = new Map<string, boolean>();
+    for (const f of staged) requests.set(f.path, true);
+    for (const f of unstaged) {
+      if (!requests.has(f.path)) requests.set(f.path, false);
+    }
+    return Array.from(requests.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([path, isStaged]) => `${isStaged ? "1" : "0"}${path}`)
+      .join("\0");
   }, [staged, unstaged]);
 
   useEffect(() => {
-    if (pathsKey == null) return;
+    if (requestsKey == null) return;
 
-    if (pathsKey === "") {
+    if (requestsKey === "") {
       if (diffsRef.current.size > 0) setDiffs(new Map());
+      diffSidesRef.current.clear();
       setLoading(false);
       return;
     }
 
-    const paths = pathsKey.split("\0");
+    const requests: FileContentsRequest[] = requestsKey
+      .split("\0")
+      .map((entry) => ({
+        staged: entry[0] === "1",
+        path: entry.slice(1),
+      }));
+    const paths = requests.map((request) => request.path);
     const pathSet = new Set(paths);
     const current = diffsRef.current;
-    const missing = paths.filter((p) => !current.has(p));
+    const currentSides = diffSidesRef.current;
+    const missing = requests.filter(
+      (request) =>
+        !current.has(request.path) ||
+        currentSides.get(request.path) !== request.staged,
+    );
 
     // Prune entries for paths no longer present.
     let needsPrune = current.size !== paths.length;
@@ -70,6 +89,9 @@ export function useDiffs(
       const pruned = new Map<string, FileDiffContents>();
       for (const [p, v] of current) {
         if (pathSet.has(p)) pruned.set(p, v);
+      }
+      for (const p of currentSides.keys()) {
+        if (!pathSet.has(p)) currentSides.delete(p);
       }
       setDiffs(pruned);
     }
@@ -90,41 +112,47 @@ export function useDiffs(
 
     setLoading(true);
     const batchStart = performance.now();
-    const perFileAgg = createPerfAggregator(
-      "useDiffs",
-      "getFileContents:perFile",
-    );
     let okCount = 0;
     let errCount = 0;
+    const requestedSides = new Map(
+      missing.map((request) => [request.path, request.staged]),
+    );
 
-    void Promise.allSettled(
-      missing.map(async (path) => {
-        const start = performance.now();
-        try {
-          const resp = await getFileContents(path);
-          const ms = performance.now() - start;
-          perFileAgg.record(path, ms);
-          okCount += 1;
-          return [path, resp] as const;
-        } catch (err) {
-          const ms = performance.now() - start;
-          perFileAgg.record(path, ms);
-          errCount += 1;
-          throw err;
-        }
-      }),
-    )
+    void getFileContentsBatch(missing)
       .then((results) => {
         if (cancelled) return;
         setDiffs((prev) => {
           const next = new Map(prev);
           for (const result of results) {
-            if (result.status === "fulfilled") {
-              const [path, resp] = result.value;
-              next.set(path, toFileDiffContents(resp));
+            if (result.response) {
+              okCount += 1;
+              next.set(result.path, toFileDiffContents(result.response));
+              currentSides.set(
+                result.path,
+                requestedSides.get(result.path) ?? false,
+              );
             } else {
-              console.warn("[cub] failed to fetch diff:", result.reason);
+              errCount += 1;
+              console.warn(
+                "[cub] failed to fetch diff:",
+                result.error ?? result.path,
+              );
+              next.delete(result.path);
+              currentSides.delete(result.path);
             }
+          }
+          return next;
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        errCount = missing.length;
+        console.warn("[cub] failed to fetch diff batch:", err);
+        setDiffs((prev) => {
+          const next = new Map(prev);
+          for (const request of missing) {
+            next.delete(request.path);
+            currentSides.delete(request.path);
           }
           return next;
         });
@@ -139,13 +167,12 @@ export function useDiffs(
           totalMs,
           cancelled,
         });
-        perFileAgg.flush(15);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [pathsKey]);
+  }, [requestsKey]);
 
   return { diffs, loading };
 }

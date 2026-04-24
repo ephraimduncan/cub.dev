@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
-use git2::{Repository, Status, StatusOptions};
 use git2::build::{CheckoutBuilder, RepoBuilder};
-use git2::{FetchOptions, RemoteCallbacks};
-use serde::Serialize;
+use git2::{FetchOptions, Index, Patch, RemoteCallbacks, Repository, Status, StatusOptions, Tree};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // Temporary perf instrumentation. Emits perf:log events to the frontend and
 // also prints to stderr so logs show up in the terminal that launched the
@@ -38,19 +37,116 @@ pub struct AppState {
     pub event_listener_stop: Arc<AtomicBool>,
     pub clone_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub watcher: Mutex<Option<crate::watcher::RepoWatcher>>,
+    pub watcher_generation: AtomicU64,
 }
 
 fn restart_watcher(app: &AppHandle, state: &AppState, workdir: &Path) {
-    let new_watcher = match crate::watcher::start(workdir, app.clone()) {
-        Ok(w) => Some(w),
-        Err(e) => {
-            eprintln!("[cub-watcher] failed to start: {e}");
+    let generation = state.watcher_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let workdir = workdir.to_path_buf();
+    let workdir_label = workdir.to_string_lossy().to_string();
+
+    let clear_start = Instant::now();
+    let clear_error = match state.watcher.lock() {
+        Ok(mut guard) => {
+            *guard = None;
             None
         }
+        Err(e) => Some(e.to_string()),
     };
-    if let Ok(mut guard) = state.watcher.lock() {
-        *guard = new_watcher;
-    }
+    perf_event(
+        app,
+        "watcher:spawn",
+        json!({
+            "generation": generation,
+            "workdir": &workdir_label,
+            "clearMs": ms_since(clear_start),
+            "clearError": clear_error,
+        }),
+    );
+
+    let app = app.clone();
+    let _ = thread::spawn(move || {
+        let start = Instant::now();
+        let result = crate::watcher::start(&workdir, app.clone());
+        let start_ms = ms_since(start);
+        let state = app.state::<AppState>();
+
+        if state.watcher_generation.load(Ordering::SeqCst) != generation {
+            perf_event(
+                &app,
+                "watcher:stale",
+                json!({
+                    "generation": generation,
+                    "workdir": &workdir_label,
+                    "startMs": start_ms,
+                }),
+            );
+            return;
+        }
+
+        match result {
+            Ok(watcher) => {
+                let lock_start = Instant::now();
+                match state.watcher.lock() {
+                    Ok(mut guard) => {
+                        if state.watcher_generation.load(Ordering::SeqCst) != generation {
+                            perf_event(
+                                &app,
+                                "watcher:stale",
+                                json!({
+                                    "generation": generation,
+                                    "workdir": &workdir_label,
+                                    "phase": "store",
+                                    "startMs": start_ms,
+                                    "lockMs": ms_since(lock_start),
+                                }),
+                            );
+                            return;
+                        }
+                        *guard = Some(watcher);
+                        perf_event(
+                            &app,
+                            "watcher:ready",
+                            json!({
+                                "generation": generation,
+                                "workdir": &workdir_label,
+                                "startMs": start_ms,
+                                "lockMs": ms_since(lock_start),
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        perf_event(
+                            &app,
+                            "watcher:error",
+                            json!({
+                                "generation": generation,
+                                "workdir": &workdir_label,
+                                "phase": "store",
+                                "startMs": start_ms,
+                                "lockMs": ms_since(lock_start),
+                                "error": e.to_string(),
+                            }),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[cub-watcher] failed to start: {e}");
+                perf_event(
+                    &app,
+                    "watcher:error",
+                    json!({
+                        "generation": generation,
+                        "workdir": &workdir_label,
+                        "phase": "start",
+                        "startMs": start_ms,
+                        "error": e,
+                    }),
+                );
+            }
+        }
+    });
 }
 
 #[derive(Serialize, Clone)]
@@ -86,44 +182,192 @@ pub fn open_repo(
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<String, String> {
-    let repo = Repository::discover(&path).map_err(|e| format!("failed to open repo: {e}"))?;
-    let workdir_path = repo
-        .workdir()
-        .ok_or_else(|| "bare repositories are not supported".to_string())?
-        .to_path_buf();
+    let total_start = Instant::now();
+    perf_event(&app, "open_repo:start", json!({ "path": &path }));
+
+    let discover_start = Instant::now();
+    let repo = match Repository::discover(&path) {
+        Ok(repo) => repo,
+        Err(e) => {
+            perf_event(
+                &app,
+                "open_repo:error",
+                json!({
+                    "path": &path,
+                    "phase": "discover",
+                    "discoverMs": ms_since(discover_start),
+                    "totalMs": ms_since(total_start),
+                    "error": e.to_string(),
+                }),
+            );
+            return Err(format!("failed to open repo: {e}"));
+        }
+    };
+    let discover_ms = ms_since(discover_start);
+
+    let workdir_start = Instant::now();
+    let workdir_path = match repo.workdir() {
+        Some(workdir) => workdir.to_path_buf(),
+        None => {
+            perf_event(
+                &app,
+                "open_repo:error",
+                json!({
+                    "path": &path,
+                    "phase": "workdir",
+                    "discoverMs": discover_ms,
+                    "workdirMs": ms_since(workdir_start),
+                    "totalMs": ms_since(total_start),
+                    "error": "bare repositories are not supported",
+                }),
+            );
+            return Err("bare repositories are not supported".to_string());
+        }
+    };
+    let workdir_ms = ms_since(workdir_start);
     let workdir = workdir_path.to_string_lossy().to_string();
-    *state
-        .repo
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))? = Some(repo);
+
+    let lock_start = Instant::now();
+    let mut guard = match state.repo.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            perf_event(
+                &app,
+                "open_repo:error",
+                json!({
+                    "path": &path,
+                    "workdir": &workdir,
+                    "phase": "lock",
+                    "discoverMs": discover_ms,
+                    "workdirMs": workdir_ms,
+                    "lockWaitMs": ms_since(lock_start),
+                    "totalMs": ms_since(total_start),
+                    "error": e.to_string(),
+                }),
+            );
+            return Err(format!("lock poisoned: {e}"));
+        }
+    };
+    let lock_wait_ms = ms_since(lock_start);
+
+    let state_set_start = Instant::now();
+    *guard = Some(repo);
+    drop(guard);
+    let state_set_ms = ms_since(state_set_start);
+
+    let watcher_start = Instant::now();
     restart_watcher(&app, state.inner(), &workdir_path);
+    let watcher_spawn_ms = ms_since(watcher_start);
+
+    perf_event(
+        &app,
+        "open_repo",
+        json!({
+            "path": &path,
+            "workdir": &workdir,
+            "totalMs": ms_since(total_start),
+            "discoverMs": discover_ms,
+            "workdirMs": workdir_ms,
+            "lockWaitMs": lock_wait_ms,
+            "stateSetMs": state_set_ms,
+            "watcherSpawnMs": watcher_spawn_ms,
+        }),
+    );
     Ok(workdir)
 }
 
-fn count_diff_lines(
-    diff: &git2::Diff,
-) -> Result<HashMap<String, (u32, u32)>, String> {
-    let mut counts: HashMap<String, (u32, u32)> = HashMap::new();
+enum CountDiffKind {
+    /// HEAD tree → index.
+    StagedAgainstHead(Option<git2::Oid>),
+    /// index → workdir.
+    Unstaged,
+}
 
-    diff.foreach(
-        &mut |_delta, _progress| true,
-        None,
-        None,
-        Some(&mut |delta, _hunk, line| {
-            if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
-                let entry = counts.entry(path.to_string()).or_insert((0, 0));
-                match line.origin() {
-                    '+' => entry.0 += 1,
-                    '-' => entry.1 += 1,
-                    _ => {}
-                }
+fn build_diff_for_count<'a>(
+    repo: &'a Repository,
+    kind: &CountDiffKind,
+) -> Result<git2::Diff<'a>, git2::Error> {
+    match kind {
+        CountDiffKind::StagedAgainstHead(tree_oid) => {
+            let tree = tree_oid.and_then(|oid| repo.find_tree(oid).ok());
+            repo.diff_tree_to_index(tree.as_ref(), None, None)
+        }
+        CountDiffKind::Unstaged => repo.diff_index_to_workdir(None, None),
+    }
+}
+
+/// Compute per-file `(additions, deletions)` for a diff in parallel. Each
+/// worker opens its own `Repository` and re-creates the diff (cheap: ~ms),
+/// then computes `Patch::from_diff` on its slice of delta indexes. git2's
+/// `Diff` is `!Send`/`!Sync`, so this is the only way to split xdiff work
+/// across cores — which matters because xdiff for 600+ files is CPU-bound
+/// and was pinning a single core at ~300ms.
+fn count_diff_lines_parallel(
+    workdir: &Path,
+    kind: CountDiffKind,
+    delta_count: usize,
+) -> HashMap<String, (u32, u32)> {
+    if delta_count == 0 {
+        return HashMap::new();
+    }
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4)
+        .min(delta_count);
+    let chunk_size = delta_count.div_ceil(num_threads);
+    let kind_ref = &kind;
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..delta_count)
+            .step_by(chunk_size)
+            .map(|start| {
+                let end = (start + chunk_size).min(delta_count);
+                s.spawn(move || -> HashMap<String, (u32, u32)> {
+                    let Ok(repo) = Repository::open(workdir) else {
+                        return HashMap::new();
+                    };
+                    let Ok(diff) = build_diff_for_count(&repo, kind_ref) else {
+                        return HashMap::new();
+                    };
+                    let mut counts = HashMap::new();
+                    for idx in start..end {
+                        let Some(delta) = diff.get_delta(idx) else { continue };
+                        let Some(path) = delta
+                            .new_file()
+                            .path()
+                            .or_else(|| delta.old_file().path())
+                            .and_then(|p| p.to_str())
+                            .map(str::to_owned)
+                        else {
+                            continue;
+                        };
+                        let Ok(Some(patch)) = Patch::from_diff(&diff, idx) else {
+                            continue;
+                        };
+                        let Ok((_, adds, dels)) = patch.line_stats() else {
+                            continue;
+                        };
+                        counts.insert(
+                            path,
+                            (
+                                u32::try_from(adds).unwrap_or(u32::MAX),
+                                u32::try_from(dels).unwrap_or(u32::MAX),
+                            ),
+                        );
+                    }
+                    counts
+                })
+            })
+            .collect();
+
+        let mut merged = HashMap::with_capacity(delta_count);
+        for handle in handles {
+            if let Ok(map) = handle.join() {
+                merged.extend(map);
             }
-            true
-        }),
-    )
-    .map_err(|e| format!("failed to iterate diff: {e}"))?;
-
-    Ok(counts)
+        }
+        merged
+    })
 }
 
 #[tauri::command]
@@ -139,6 +383,7 @@ pub fn get_repo_status(
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let lock_ms = ms_since(lock_start);
     let repo = lock.as_ref().ok_or("no repository open")?;
+    let workdir_path = repo.workdir().ok_or("bare repository")?.to_path_buf();
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
@@ -162,7 +407,11 @@ pub fn get_repo_status(
     let staged_diff_ms = ms_since(staged_diff_start);
 
     let staged_count_start = Instant::now();
-    let staged_counts = count_diff_lines(&staged_diff)?;
+    let staged_counts = count_diff_lines_parallel(
+        &workdir_path,
+        CountDiffKind::StagedAgainstHead(head_tree.as_ref().map(|t| t.id())),
+        staged_diff.deltas().count(),
+    );
     let staged_count_ms = ms_since(staged_count_start);
 
     let unstaged_diff_start = Instant::now();
@@ -172,7 +421,11 @@ pub fn get_repo_status(
     let unstaged_diff_ms = ms_since(unstaged_diff_start);
 
     let unstaged_count_start = Instant::now();
-    let unstaged_counts = count_diff_lines(&unstaged_diff)?;
+    let unstaged_counts = count_diff_lines_parallel(
+        &workdir_path,
+        CountDiffKind::Unstaged,
+        unstaged_diff.deltas().count(),
+    );
     let unstaged_count_ms = ms_since(unstaged_count_start);
 
     let mut staged = Vec::new();
@@ -292,6 +545,19 @@ pub struct FileContentsResponse {
     pub new_binary: bool,
 }
 
+#[derive(Deserialize)]
+pub struct FileContentsRequest {
+    pub path: String,
+    pub staged: bool,
+}
+
+#[derive(Serialize)]
+pub struct FileContentsBatchItem {
+    pub path: String,
+    pub response: Option<FileContentsResponse>,
+    pub error: Option<String>,
+}
+
 struct FileSideContent {
     content: Option<String>,
     is_binary: bool,
@@ -300,7 +566,10 @@ struct FileSideContent {
 impl FileSideContent {
     /// File is absent from this side (no tree entry, or file doesn't exist on disk).
     fn absent() -> Self {
-        Self { content: None, is_binary: false }
+        Self {
+            content: None,
+            is_binary: false,
+        }
     }
 }
 
@@ -317,12 +586,18 @@ fn decode_file_side(bytes: &[u8]) -> FileSideContent {
     }
 }
 
-fn read_head_file(repo: &Repository, path: &Path) -> Result<FileSideContent, String> {
-    let Some(tree) = repo
-        .revparse_single("HEAD^{tree}")
+fn read_head_tree(repo: &Repository) -> Option<Tree<'_>> {
+    repo.revparse_single("HEAD^{tree}")
         .ok()
         .and_then(|obj| obj.into_tree().ok())
-    else {
+}
+
+fn read_tree_file(
+    repo: &Repository,
+    tree: Option<&Tree<'_>>,
+    path: &Path,
+) -> Result<FileSideContent, String> {
+    let Some(tree) = tree else {
         return Ok(FileSideContent::absent());
     };
 
@@ -341,31 +616,28 @@ fn read_head_file(repo: &Repository, path: &Path) -> Result<FileSideContent, Str
 }
 
 fn read_workdir_file(workdir: &Path, path: &Path) -> Result<FileSideContent, String> {
-    let abs = workdir.join(path);
-    let canonical_abs = match abs.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            if !abs.exists() {
-                return Ok(FileSideContent::absent());
-            }
-            return Err(format!("cannot canonicalize {}: file exists but path resolution failed", path.display()));
+    // Reject anything other than normal/cur-dir components so we never escape
+    // the workdir. Avoids the per-file `canonicalize()` (5+ stat syscalls per
+    // path) that previously dominated `get_file_contents_batch:readMs`.
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => return Err(format!("invalid path: {}", path.display())),
         }
-    };
-    let canonical_workdir = workdir
-        .canonicalize()
-        .map_err(|e| format!("cannot canonicalize workdir: {e}"))?;
-    if !canonical_abs.starts_with(&canonical_workdir) {
-        return Err("path traversal detected".to_string());
     }
-
-    let bytes = std::fs::read(&canonical_abs)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-
-    Ok(decode_file_side(&bytes))
+    let abs = workdir.join(path);
+    match std::fs::read(&abs) {
+        Ok(bytes) => Ok(decode_file_side(&bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(FileSideContent::absent()),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+    }
 }
 
-fn read_index_file(repo: &Repository, path: &Path) -> Result<FileSideContent, String> {
-    let index = repo.index().map_err(|e| format!("failed to get index: {e}"))?;
+fn read_index_file(
+    repo: &Repository,
+    index: &Index,
+    path: &Path,
+) -> Result<FileSideContent, String> {
     let entry = match index.get_path(path, 0) {
         Some(e) => e,
         None => return Ok(FileSideContent::absent()),
@@ -377,13 +649,13 @@ fn read_index_file(repo: &Repository, path: &Path) -> Result<FileSideContent, St
 }
 
 #[tauri::command]
-pub fn get_file_contents(
-    path: String,
-    staged: Option<bool>,
+pub fn get_file_contents_batch(
+    requests: Vec<FileContentsRequest>,
     app: AppHandle,
     state: State<AppState>,
-) -> Result<FileContentsResponse, String> {
+) -> Result<Vec<FileContentsBatchItem>, String> {
     let total_start = Instant::now();
+    let requested_count = requests.len();
     let lock_start = Instant::now();
     let lock = state
         .repo
@@ -392,50 +664,129 @@ pub fn get_file_contents(
     let lock_ms = ms_since(lock_start);
     let repo = lock.as_ref().ok_or("no repository open")?;
     let workdir = repo.workdir().ok_or("bare repository")?;
-    let relative_path = Path::new(&path);
 
-    let head_start = Instant::now();
-    let old_side = read_head_file(repo, relative_path)?;
-    let head_ms = ms_since(head_start);
+    let setup_start = Instant::now();
+    let head_tree_oid = read_head_tree(repo).map(|t| t.id());
+    let needs_index = requests.iter().any(|request| request.staged);
+    let needs_workdir = requests.iter().any(|request| !request.staged);
+    let setup_ms = ms_since(setup_start);
 
-    let side = if staged.unwrap_or(false) { "index" } else { "workdir" };
-    let new_start = Instant::now();
-    let new_side = if staged.unwrap_or(false) {
-        read_index_file(repo, relative_path)?
+    let read_start = Instant::now();
+
+    // Parallelize file reads across cores. git2's Repository/Index/Tree are
+    // `!Send`, so each worker opens its own Repository (cheap: ~ms) and reads
+    // its slice of files. For 600+ requests this turns ~220ms of sequential
+    // I/O + blob lookups into ~50–80ms of parallel work on an 8-core box.
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4)
+        .min(requested_count.max(1));
+    let chunk_size = requested_count.div_ceil(num_threads.max(1));
+
+    let responses: Vec<FileContentsBatchItem> = if requested_count == 0 {
+        Vec::new()
     } else {
-        read_workdir_file(workdir, relative_path)?
+        std::thread::scope(|s| {
+            let handles: Vec<_> = requests
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    s.spawn(move || -> Vec<FileContentsBatchItem> {
+                        let repo = match Repository::open(workdir) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                return chunk
+                                    .iter()
+                                    .map(|r| FileContentsBatchItem {
+                                        path: r.path.clone(),
+                                        response: None,
+                                        error: Some(format!("worker repo open failed: {e}")),
+                                    })
+                                    .collect();
+                            }
+                        };
+                        let head_tree =
+                            head_tree_oid.and_then(|oid| repo.find_tree(oid).ok());
+                        let chunk_needs_index = chunk.iter().any(|r| r.staged);
+                        let index = if chunk_needs_index {
+                            repo.index().ok()
+                        } else {
+                            None
+                        };
+
+                        let mut out = Vec::with_capacity(chunk.len());
+                        for request in chunk {
+                            let path = request.path.clone();
+                            let staged = request.staged;
+                            let relative_path = Path::new(&path);
+                            let result = (|| -> Result<FileContentsResponse, String> {
+                                let old_side =
+                                    read_tree_file(&repo, head_tree.as_ref(), relative_path)?;
+                                let new_side = if staged {
+                                    read_index_file(
+                                        &repo,
+                                        index.as_ref().ok_or("index unavailable")?,
+                                        relative_path,
+                                    )?
+                                } else {
+                                    read_workdir_file(workdir, relative_path)?
+                                };
+                                Ok(FileContentsResponse {
+                                    name: path.clone(),
+                                    old_content: old_side.content,
+                                    old_binary: old_side.is_binary,
+                                    new_content: new_side.content,
+                                    new_binary: new_side.is_binary,
+                                })
+                            })();
+                            out.push(match result {
+                                Ok(response) => FileContentsBatchItem {
+                                    path,
+                                    response: Some(response),
+                                    error: None,
+                                },
+                                Err(error) => FileContentsBatchItem {
+                                    path,
+                                    response: None,
+                                    error: Some(error),
+                                },
+                            });
+                        }
+                        out
+                    })
+                })
+                .collect();
+
+            let mut all = Vec::with_capacity(requested_count);
+            for handle in handles {
+                if let Ok(chunk) = handle.join() {
+                    all.extend(chunk);
+                }
+            }
+            all
+        })
     };
-    let new_ms = ms_since(new_start);
 
-    let total_ms = ms_since(total_start);
-    // Filter out the firehose: only emit when a single call is slow. 600
-    // parallel fast calls would otherwise drown the console.
-    if total_ms >= 8.0 || lock_ms >= 5.0 {
-        perf_event(
-            &app,
-            "get_file_contents:slow",
-            json!({
-                "path": &path,
-                "side": side,
-                "totalMs": total_ms,
-                "lockWaitMs": lock_ms,
-                "headMs": head_ms,
-                "newMs": new_ms,
-                "oldBinary": old_side.is_binary,
-                "newBinary": new_side.is_binary,
-                "oldLen": old_side.content.as_ref().map(|s| s.len()).unwrap_or(0),
-                "newLen": new_side.content.as_ref().map(|s| s.len()).unwrap_or(0),
-            }),
-        );
-    }
+    let read_ms = ms_since(read_start);
+    let ok_count = responses.iter().filter(|r| r.response.is_some()).count();
+    let err_count = responses.len().saturating_sub(ok_count);
 
-    Ok(FileContentsResponse {
-        name: path,
-        old_content: old_side.content,
-        old_binary: old_side.is_binary,
-        new_content: new_side.content,
-        new_binary: new_side.is_binary,
-    })
+    perf_event(
+        &app,
+        "get_file_contents_batch",
+        json!({
+            "requested": requested_count,
+            "ok": ok_count,
+            "errors": err_count,
+            "stagedRequests": needs_index,
+            "workdirRequests": needs_workdir,
+            "lockWaitMs": lock_ms,
+            "setupMs": setup_ms,
+            "readMs": read_ms,
+            "totalMs": ms_since(total_start),
+        }),
+    );
+
+    Ok(responses)
 }
 
 fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {

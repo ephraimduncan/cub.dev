@@ -1,23 +1,25 @@
 use std::path::{Component, Path};
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::{Config, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, Debouncer, RecommendedCache,
+    new_debouncer_opt, DebounceEventResult, Debouncer, NoCache,
 };
 use tauri::{AppHandle, Emitter};
 
 /// Debounced filesystem watcher. Dropping it stops the background thread and
 /// releases the watch on the underlying directory.
 pub struct RepoWatcher {
-    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    _debouncer: Debouncer<RecommendedWatcher, NoCache>,
 }
 
 /// Start a recursive watch on `workdir`. Events inside `.git` are filtered
 /// out; everything else is coalesced with a 300 ms debounce and emits a
 /// single `repo:changed` Tauri event to the frontend.
 pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
-    let mut debouncer = new_debouncer(
+    // We only need a "repo changed" trigger. The default macOS/Windows cache
+    // walks the entire recursive tree to collect file IDs before watch() returns.
+    let mut debouncer: Debouncer<RecommendedWatcher, NoCache> = new_debouncer_opt(
         Duration::from_millis(300),
         None,
         move |result: DebounceEventResult| match result {
@@ -38,6 +40,8 @@ pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
                 }
             }
         },
+        NoCache::new(),
+        Config::default(),
     )
     .map_err(|e| format!("failed to create watcher: {e}"))?;
 

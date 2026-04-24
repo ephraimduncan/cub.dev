@@ -120,21 +120,31 @@ export function summarizePerfEntries(
  */
 export function createPerfAggregator(layer: string, op: string) {
   const durations = new Map<string, number>();
+  // Optional per-key context (e.g. line count) recorded alongside each ms.
+  // Surfaced in the summary's `top` entries so slow files explain themselves.
+  const lines = new Map<string, number>();
   return {
-    record(key: string, ms: number) {
+    record(key: string, ms: number, lineCount?: number) {
       // Keep worst-case per key so the slow files surface in the summary.
       const prev = durations.get(key);
-      if (prev == null || ms > prev) durations.set(key, ms);
+      if (prev == null || ms > prev) {
+        durations.set(key, ms);
+        if (lineCount != null) lines.set(key, lineCount);
+      }
     },
     size() {
       return durations.size;
     },
     flush(topN = 10) {
       if (durations.size === 0) return;
-      perfLog(layer, `${op}:summary`, {
-        ...summarizePerfEntries(durations, topN),
+      const summary = summarizePerfEntries(durations, topN);
+      const top = summary.top.map((entry) => {
+        const l = lines.get(entry.key);
+        return l != null ? { ...entry, lines: l } : entry;
       });
+      perfLog(layer, `${op}:summary`, { ...summary, top });
       durations.clear();
+      lines.clear();
     },
   };
 }

@@ -144,6 +144,7 @@ type ParsedFile =
       additions: number;
       deletions: number;
       kind: ChangeKind;
+      totalLines: number;
     }
   | {
       contentKind: "binary";
@@ -344,12 +345,20 @@ export function DiffPanel({
         continue;
       }
 
+      const newLines = contents.newFile.contents
+        ? contents.newFile.contents.split("\n").length
+        : 0;
+      const oldLines = contents.oldFile.contents
+        ? contents.oldFile.contents.split("\n").length
+        : 0;
+      const totalLines = Math.max(newLines, oldLines);
+
       let fileDiff = cache.get(contents);
       if (!fileDiff) {
         const parseStart = performance.now();
         fileDiff = parseDiffFromFile(contents.oldFile, contents.newFile);
         cache.set(contents, fileDiff);
-        parseAgg.record(file.path, performance.now() - parseStart);
+        parseAgg.record(file.path, performance.now() - parseStart, totalLines);
         misses += 1;
       } else {
         hits += 1;
@@ -362,6 +371,7 @@ export function DiffPanel({
         additions: file.additions,
         deletions: file.deletions,
         kind: file.kind,
+        totalLines,
       });
     }
     perfLog("DiffPanel", "parseLoop", {
@@ -537,6 +547,7 @@ export function DiffPanel({
               onCancelAnnotation={onCancelAnnotation}
               onSubmitAnnotation={onSubmitAnnotation}
               onDeleteAnnotation={onDeleteAnnotation}
+              totalLines={parsedFile.contentKind === "text" ? parsedFile.totalLines : 0}
               {...(parsedFile.contentKind === "text"
                 ? {
                     contentKind: "text" as const,

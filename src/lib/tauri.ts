@@ -36,11 +36,21 @@ export interface FileContentsResponse {
   new_binary: boolean;
 }
 
-export function getFileContents(
-  path: string,
-  staged = false,
-): Promise<FileContentsResponse> {
-  return invoke<FileContentsResponse>("get_file_contents", { path, staged });
+export interface FileContentsRequest {
+  path: string;
+  staged: boolean;
+}
+
+export interface FileContentsBatchItem {
+  path: string;
+  response: FileContentsResponse | null;
+  error: string | null;
+}
+
+export function getFileContentsBatch(
+  requests: FileContentsRequest[],
+): Promise<FileContentsBatchItem[]> {
+  return invoke<FileContentsBatchItem[]>("get_file_contents_batch", { requests });
 }
 
 export function stageFile(path: string): Promise<void> {

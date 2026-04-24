@@ -27,3 +27,11 @@ git2 = { version = "0.20", default-features = false, features = ["https", "ssh"]
 ureq = { version = "3", features = ["json"] }
 notify = "8"
 notify-debouncer-full = "0.5"
+
+
+# Optimize dependencies (libgit2 wrappers, etc.) in dev builds. Without this,
+# `cargo run` runs unoptimized git2/xdiff which dominates `get_repo_status`
+# and `get_file_contents_batch` for large repos. Project code stays at
+# opt-level 0 so incremental compiles remain fast.
+[profile.dev.package."*"]
+opt-level = 3
