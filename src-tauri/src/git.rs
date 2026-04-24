@@ -675,13 +675,19 @@ pub fn get_file_contents_batch(
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let lock_ms = ms_since(lock_start);
     let repo = lock.as_ref().ok_or("no repository open")?;
-    let workdir = repo.workdir().ok_or("bare repository")?;
 
     let setup_start = Instant::now();
+    let workdir_path = repo.workdir().ok_or("bare repository")?.to_path_buf();
     let head_tree_oid = read_head_tree(repo).map(|t| t.id());
     let needs_index = requests.iter().any(|request| request.staged);
     let needs_workdir = requests.iter().any(|request| !request.staged);
     let setup_ms = ms_since(setup_start);
+
+    // Release the global repo lock before the parallel read phase. Workers
+    // open their own Repository handles; holding the lock here serializes
+    // every other git2 command (refresh, stage, watcher-triggered refresh).
+    drop(lock);
+    let workdir: &Path = &workdir_path;
 
     let read_start = Instant::now();
 
