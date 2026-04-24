@@ -626,6 +626,18 @@ fn read_workdir_file(workdir: &Path, path: &Path) -> Result<FileSideContent, Str
         }
     }
     let abs = workdir.join(path);
+    // Component filter blocks `..` but not symlinks; a tracked file like
+    // `evil.txt -> /etc/passwd` would otherwise be followed by `fs::read`.
+    let meta = match std::fs::symlink_metadata(&abs) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileSideContent::absent());
+        }
+        Err(e) => return Err(format!("cannot stat {}: {e}", path.display())),
+    };
+    if meta.file_type().is_symlink() {
+        return Err(format!("symlink not permitted: {}", path.display()));
+    }
     match std::fs::read(&abs) {
         Ok(bytes) => Ok(decode_file_side(&bytes)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(FileSideContent::absent()),
