@@ -502,19 +502,21 @@ export function DiffPanel({
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
-      <DiffToolbar
-        diffStyle={diffStyle}
-        onDiffStyleChange={onDiffStyleChange}
-        allExpanded={allExpanded}
-        onToggleExpandAll={onToggleExpandAll}
-        commentCount={totalCommentCount}
-        pendingCount={pendingCount}
-        acknowledgedCount={acknowledgedCount}
-        resolvedCount={resolvedCount}
-        onSubmitReview={onSubmitReview}
-        onClearResolved={onClearResolved}
-        submittingReview={submittingReview}
-      />
+      {parsedFiles.length > 0 && (
+        <DiffToolbar
+          diffStyle={diffStyle}
+          onDiffStyleChange={onDiffStyleChange}
+          allExpanded={allExpanded}
+          onToggleExpandAll={onToggleExpandAll}
+          commentCount={totalCommentCount}
+          pendingCount={pendingCount}
+          acknowledgedCount={acknowledgedCount}
+          resolvedCount={resolvedCount}
+          onSubmitReview={onSubmitReview}
+          onClearResolved={onClearResolved}
+          submittingReview={submittingReview}
+        />
+      )}
       <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto">
         {parsedFiles.length === 0 ? (
           <div className="flex h-full items-center justify-center">
