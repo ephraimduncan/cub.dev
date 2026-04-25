@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Component, Path};
 use std::time::Duration;
 
@@ -51,12 +52,18 @@ pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
 
 fn path_is_relevant(path: &Path) -> bool {
     let mut inside_git = false;
-    let mut git_path = Vec::new();
+    let mut first_git_component: Option<&OsStr> = None;
+    let mut last_git_component: Option<&OsStr> = None;
 
     for component in path.components() {
         match component {
             Component::Normal(name) if name == ".git" => inside_git = true,
-            Component::Normal(name) if inside_git => git_path.push(name),
+            Component::Normal(name) if inside_git => {
+                if first_git_component.is_none() {
+                    first_git_component = Some(name);
+                }
+                last_git_component = Some(name);
+            }
             _ => {}
         }
     }
@@ -64,18 +71,17 @@ fn path_is_relevant(path: &Path) -> bool {
     if !inside_git {
         return true;
     }
-    if git_path.is_empty() {
+    let Some(first_git_component) = first_git_component else {
         return false;
-    }
-    if git_path
-        .last()
+    };
+    if last_git_component
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".lock"))
     {
         return false;
     }
 
-    match git_path[0].to_str() {
+    match first_git_component.to_str() {
         Some(
             "HEAD" | "index" | "packed-refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD"
             | "REBASE_HEAD" | "ORIG_HEAD" | "refs",

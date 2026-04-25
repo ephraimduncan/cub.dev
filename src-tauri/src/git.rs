@@ -1190,15 +1190,15 @@ pub fn commit(
         let head_commit = head_ref
             .peel_to_commit()
             .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
-        let parents = (0..head_commit.parent_count())
-            .map(|i| {
-                head_commit
-                    .parent(i)
-                    .map_err(|e| format!("failed to read parent commit: {e}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let parent_refs = parents.iter().collect::<Vec<_>>();
-        repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parent_refs)
+        head_commit
+            .amend(
+                Some("HEAD"),
+                Some(&sig),
+                Some(&sig),
+                None,
+                Some(&message),
+                Some(&tree),
+            )
             .map_err(|e| format!("failed to amend commit: {e}"))?
     } else {
         match repo.head() {

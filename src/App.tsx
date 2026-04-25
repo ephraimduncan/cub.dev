@@ -25,6 +25,7 @@ import {
   submitReview,
   discardFile,
   getLaunchPath,
+  type CommitOptions,
   type FileEntry,
 } from "@/lib/tauri";
 import { toast } from "sonner";
@@ -321,7 +322,7 @@ function App() {
   }, [refresh]);
 
   const handleCommit = useCallback(
-    async (message: string, options?: { amend?: boolean }) => {
+    async (message: string, options?: CommitOptions) => {
       try {
         const oid = await commit(message, options);
         toast.success(

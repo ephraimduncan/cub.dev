@@ -15,7 +15,7 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { Button } from "@/components/ui/button";
 import { CommitBar } from "./commit-bar";
 import { SidebarContextMenu } from "./sidebar-context-menu";
-import type { ChangeKind, FileEntry } from "@/lib/tauri";
+import type { ChangeKind, CommitOptions, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { join } from "@tauri-apps/api/path";
@@ -32,7 +32,7 @@ interface SidebarProps {
   onToggleStage: (path: string) => void;
   onStageAll: () => void;
   onUnstageAll: () => void;
-  onCommit: (message: string) => void;
+  onCommit: (message: string, options?: CommitOptions) => void;
   onCloseRepo: () => void;
   onDiscardFile: (path: string) => void;
 }
