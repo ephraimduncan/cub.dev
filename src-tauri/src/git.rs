@@ -828,44 +828,95 @@ pub fn get_file_contents_batch(
 }
 
 fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {
-    let repo_path = Path::new(path);
+    let input_path = Path::new(path);
+    validate_repo_relative_path(input_path)?;
+    let mut repo_path = PathBuf::new();
+    for component in input_path.components() {
+        if let Component::Normal(part) = component {
+            repo_path.push(part);
+        }
+    }
+
+    let is_directory_path = path.ends_with('/');
     let workdir = repo.workdir().ok_or("bare repository")?;
-    let exists_in_workdir = workdir.join(repo_path).exists();
+    let target = workdir.join(&repo_path);
 
     let mut index = repo
         .index()
         .map_err(|e| format!("failed to get index: {e}"))?;
 
-    if exists_in_workdir {
-        index
-            .add_path(repo_path)
-            .map_err(|e| format!("failed to stage file: {e}"))?;
-    } else {
-        let status = match repo.status_file(repo_path) {
-            Ok(status) => status,
-            Err(_) => return Ok(()),
-        };
-
-        if !status.intersects(
-            Status::WT_DELETED
+    if is_directory_path || target.is_dir() {
+        let paths = collect_status_paths(
+            repo,
+            Status::WT_NEW
+                | Status::WT_MODIFIED
+                | Status::WT_DELETED
                 | Status::WT_RENAMED
-                | Status::WT_TYPECHANGE
-                | Status::INDEX_DELETED
-                | Status::INDEX_RENAMED
-                | Status::INDEX_TYPECHANGE,
-        ) {
-            return Ok(());
+                | Status::WT_TYPECHANGE,
+            (!repo_path.as_os_str().is_empty()).then_some(repo_path.as_path()),
+        )?;
+
+        for (path, status) in paths {
+            let child_path = Path::new(&path);
+            if child_path == repo_path || !child_path.starts_with(&repo_path) {
+                continue;
+            }
+
+            stage_index_path(&mut index, workdir, child_path, Some(status))?;
         }
 
         index
-            .remove_path(repo_path)
-            .map_err(|e| format!("failed to stage file: {e}"))?;
+            .write()
+            .map_err(|e| format!("failed to write index: {e}"))?;
+
+        return Ok(());
     }
+
+    stage_index_path(
+        &mut index,
+        workdir,
+        &repo_path,
+        repo.status_file(&repo_path).ok(),
+    )?;
 
     index
         .write()
         .map_err(|e| format!("failed to write index: {e}"))?;
 
+    Ok(())
+}
+
+fn stage_index_path(
+    index: &mut Index,
+    workdir: &Path,
+    repo_path: &Path,
+    status: Option<Status>,
+) -> Result<(), String> {
+    if workdir.join(repo_path).exists() {
+        index
+            .add_path(repo_path)
+            .map_err(|e| format!("failed to stage file: {e}"))?;
+        return Ok(());
+    }
+
+    let Some(status) = status else {
+        return Ok(());
+    };
+
+    if !status.intersects(
+        Status::WT_DELETED
+            | Status::WT_RENAMED
+            | Status::WT_TYPECHANGE
+            | Status::INDEX_DELETED
+            | Status::INDEX_RENAMED
+            | Status::INDEX_TYPECHANGE,
+    ) {
+        return Ok(());
+    }
+
+    index
+        .remove_path(repo_path)
+        .map_err(|e| format!("failed to stage file: {e}"))?;
     Ok(())
 }
 
@@ -894,9 +945,16 @@ fn unstage_path(repo: &Repository, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String> {
+fn collect_status_paths(
+    repo: &Repository,
+    flags: Status,
+    pathspec: Option<&Path>,
+) -> Result<Vec<(String, Status)>, String> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
+    if let Some(pathspec) = pathspec {
+        opts.pathspec(pathspec).disable_pathspec_match(true);
+    }
 
     let statuses = repo
         .statuses(Some(&mut opts))
@@ -906,14 +964,19 @@ fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String
     for entry in statuses.iter() {
         if entry.status().intersects(flags) {
             if let Some(path) = entry.path() {
-                paths.push(path.to_string());
+                paths.push((path.to_string(), entry.status()));
             }
         }
     }
 
-    paths.sort();
-    paths.dedup();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    paths.dedup_by(|a, b| a.0 == b.0);
     Ok(paths)
+}
+
+fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String> {
+    collect_status_paths(repo, flags, None)
+        .map(|paths| paths.into_iter().map(|(path, _)| path).collect::<Vec<_>>())
 }
 
 #[tauri::command]
@@ -935,13 +998,14 @@ pub fn stage_all(state: State<AppState>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
-    let paths = collect_paths(
+    let paths = collect_status_paths(
         repo,
         Status::WT_NEW
             | Status::WT_MODIFIED
             | Status::WT_DELETED
             | Status::WT_RENAMED
             | Status::WT_TYPECHANGE,
+        None,
     )?;
 
     let workdir = repo.workdir().ok_or("bare repository")?;
@@ -950,35 +1014,9 @@ pub fn stage_all(state: State<AppState>) -> Result<(), String> {
         .index()
         .map_err(|e| format!("failed to get index: {e}"))?;
 
-    for path in &paths {
-        let repo_path = Path::new(path);
-        let exists_in_workdir = workdir.join(repo_path).exists();
-
-        if exists_in_workdir {
-            index
-                .add_path(repo_path)
-                .map_err(|e| format!("failed to stage file: {e}"))?;
-        } else {
-            let status = match repo.status_file(repo_path) {
-                Ok(status) => status,
-                Err(_) => continue,
-            };
-
-            if !status.intersects(
-                Status::WT_DELETED
-                    | Status::WT_RENAMED
-                    | Status::WT_TYPECHANGE
-                    | Status::INDEX_DELETED
-                    | Status::INDEX_RENAMED
-                    | Status::INDEX_TYPECHANGE,
-            ) {
-                continue;
-            }
-
-            index
-                .remove_path(repo_path)
-                .map_err(|e| format!("failed to stage file: {e}"))?;
-        }
+    for (path, status) in paths {
+        let repo_path = Path::new(&path);
+        stage_index_path(&mut index, workdir, repo_path, Some(status))?;
     }
 
     index
