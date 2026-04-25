@@ -69,8 +69,15 @@ export function unstageAll(): Promise<void> {
   return invoke<void>("unstage_all");
 }
 
-export function commit(message: string): Promise<string> {
-  return invoke<string>("commit", { message });
+export interface CommitOptions {
+  amend?: boolean;
+}
+
+export function commit(
+  message: string,
+  options?: CommitOptions,
+): Promise<string> {
+  return invoke<string>("commit", { message, amend: options?.amend ?? false });
 }
 
 export interface CommentIdMapping {

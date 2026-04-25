@@ -321,10 +321,12 @@ function App() {
   }, [refresh]);
 
   const handleCommit = useCallback(
-    async (message: string) => {
+    async (message: string, options?: { amend?: boolean }) => {
       try {
-        const oid = await commit(message);
-        toast.success(`Committed: ${oid.slice(0, 7)}`);
+        const oid = await commit(message, options);
+        toast.success(
+          `${options?.amend ? "Amended" : "Committed"}: ${oid.slice(0, 7)}`,
+        );
         await refresh();
       } catch (e) {
         toast.error(`Commit failed: ${e}`);

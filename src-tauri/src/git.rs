@@ -1140,12 +1140,17 @@ fn canonical_contained_target(workdir: &Path, relative_path: &Path) -> Result<Pa
 }
 
 #[tauri::command]
-pub fn commit(message: String, state: State<AppState>) -> Result<String, String> {
+pub fn commit(
+    message: String,
+    amend: Option<bool>,
+    state: State<AppState>,
+) -> Result<String, String> {
     let lock = state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
+    let amend = amend.unwrap_or(false);
 
     if message.trim().is_empty() {
         return Err("commit message cannot be empty".to_string());
@@ -1159,11 +1164,13 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
         .write_tree()
         .map_err(|e| format!("failed to write tree: {e}"))?;
 
-    // Reject empty commits (no changes staged)
-    if let Ok(head_ref) = repo.head() {
-        if let Ok(head_commit) = head_ref.peel_to_commit() {
-            if head_commit.tree_id() == tree_oid {
-                return Err("nothing to commit: index matches HEAD".to_string());
+    if !amend {
+        // Reject empty commits (no changes staged)
+        if let Ok(head_ref) = repo.head() {
+            if let Ok(head_commit) = head_ref.peel_to_commit() {
+                if head_commit.tree_id() == tree_oid {
+                    return Err("nothing to commit: index matches HEAD".to_string());
+                }
             }
         }
     }
@@ -1176,17 +1183,36 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
         .signature()
         .map_err(|e| format!("failed to get signature: {e}"))?;
 
-    let oid = match repo.head() {
-        Ok(head_ref) => {
-            let parent = head_ref
-                .peel_to_commit()
-                .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
-            repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
-                .map_err(|e| format!("failed to create commit: {e}"))?
+    let oid = if amend {
+        let head_ref = repo
+            .head()
+            .map_err(|_| "cannot amend: no commit to amend".to_string())?;
+        let head_commit = head_ref
+            .peel_to_commit()
+            .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
+        let parents = (0..head_commit.parent_count())
+            .map(|i| {
+                head_commit
+                    .parent(i)
+                    .map_err(|e| format!("failed to read parent commit: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let parent_refs = parents.iter().collect::<Vec<_>>();
+        repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parent_refs)
+            .map_err(|e| format!("failed to amend commit: {e}"))?
+    } else {
+        match repo.head() {
+            Ok(head_ref) => {
+                let parent = head_ref
+                    .peel_to_commit()
+                    .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
+                repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
+                    .map_err(|e| format!("failed to create commit: {e}"))?
+            }
+            Err(_) => repo
+                .commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
+                .map_err(|e| format!("failed to create initial commit: {e}"))?,
         }
-        Err(_) => repo
-            .commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
-            .map_err(|e| format!("failed to create initial commit: {e}"))?,
     };
 
     Ok(oid.to_string())
