@@ -21,8 +21,7 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
   const [editorOverflows, setEditorOverflows] = useState(false);
   const hasMessage = message.trim() !== "";
   const commitDisabled = !hasMessage || stagedCount === 0;
-  const amendDisabled = !hasMessage;
-
+  const amendDisabled = commitDisabled;
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -69,8 +68,8 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
         <div
           className={
             editorOverflows
-              ? "flex h-9 flex-none items-center justify-end border-t border-border px-2"
-              : "flex h-9 flex-none items-center justify-end border-t border-transparent px-2"
+              ? "flex h-9 flex-none items-center justify-end border-t border-border px-1"
+              : "flex h-9 flex-none items-center justify-end border-t border-transparent px-1"
           }
         >
           <ButtonGroup aria-label="Commit actions">
