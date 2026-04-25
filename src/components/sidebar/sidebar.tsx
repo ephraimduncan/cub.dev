@@ -15,7 +15,7 @@ import type { GitStatus, GitStatusEntry } from "@pierre/trees";
 import { Button } from "@/components/ui/button";
 import { CommitBar } from "./commit-bar";
 import { SidebarContextMenu } from "./sidebar-context-menu";
-import type { ChangeKind, FileEntry } from "@/lib/tauri";
+import type { ChangeKind, CommitOptions, FileEntry } from "@/lib/tauri";
 import { toast } from "sonner";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { join } from "@tauri-apps/api/path";
@@ -32,7 +32,7 @@ interface SidebarProps {
   onToggleStage: (path: string) => void;
   onStageAll: () => void;
   onUnstageAll: () => void;
-  onCommit: (message: string) => void;
+  onCommit: (message: string, options?: CommitOptions) => void;
   onCloseRepo: () => void;
   onDiscardFile: (path: string) => void;
 }
@@ -98,7 +98,7 @@ export function Sidebar({
           {workdir?.replace(/\/+$/, "").split("/").pop() ?? "No repository"}
         </p>
         <p className="shrink-0 pr-1 text-xs tabular-nums text-muted-foreground">
-          {totalCount} file{totalCount === 1 ? "" : "s"}
+          {totalCount} change{totalCount === 1 ? "" : "s"}
         </p>
       </div>
 
@@ -189,12 +189,10 @@ function Section({
   });
 
   useEffect(() => {
-    perfTimed(
-      "Sidebar",
-      "model.resetPaths",
-      () => model.resetPaths(paths),
-      { treeId, count: paths.length },
-    );
+    perfTimed("Sidebar", "model.resetPaths", () => model.resetPaths(paths), {
+      treeId,
+      count: paths.length,
+    });
   }, [paths, model, treeId]);
 
   useEffect(() => {
@@ -227,6 +225,7 @@ function Section({
   const treeWrapperRef = useRef<HTMLDivElement>(null);
   const itemHeight = model.getItemHeight();
   const [treeHeight, setTreeHeight] = useState(() => files.length * itemHeight);
+
   useLayoutEffect(() => {
     const wrapper = treeWrapperRef.current;
     if (wrapper == null) return;
@@ -235,7 +234,9 @@ function Section({
     let cancelled = false;
     const attach = () => {
       if (cancelled) return;
-      const host = wrapper.querySelector("file-tree-container") as HTMLElement | null;
+      const host = wrapper.querySelector(
+        "file-tree-container",
+      ) as HTMLElement | null;
       const list = host?.shadowRoot?.querySelector<HTMLElement>(
         '[data-file-tree-virtualized-list="true"]',
       );
@@ -287,6 +288,7 @@ function Section({
     wrapper.addEventListener("click", handleClick);
     return () => wrapper.removeEventListener("click", handleClick);
   }, [onSelectFile]);
+
   return (
     <div className="flex shrink-0 flex-col">
       <div className="flex items-center justify-between px-2 py-1">
@@ -302,7 +304,11 @@ function Section({
           {actionLabel}
         </Button>
       </div>
-      <div ref={treeWrapperRef} className="shrink-0" style={{ height: treeHeight }}>
+      <div
+        ref={treeWrapperRef}
+        className="shrink-0"
+        style={{ height: treeHeight }}
+      >
         <FileTree
           model={model}
           style={treeStyle}

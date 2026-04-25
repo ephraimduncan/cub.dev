@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Component, Path};
 use std::time::Duration;
 
@@ -11,9 +12,9 @@ pub struct RepoWatcher {
     _debouncer: Debouncer<RecommendedWatcher, NoCache>,
 }
 
-/// Start a recursive watch on `workdir`. Events inside `.git` are filtered
-/// out; everything else is coalesced with a 300 ms debounce and emits a
-/// single `repo:changed` Tauri event to the frontend.
+/// Start a recursive watch on `workdir`. Worktree changes and status-relevant
+/// `.git` changes are coalesced with a 300 ms debounce and emit a single
+/// `repo:changed` Tauri event to the frontend.
 pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
     // We only need a "repo changed" trigger. The default macOS/Windows cache
     // walks the entire recursive tree to collect file IDs before watch() returns.
@@ -24,7 +25,7 @@ pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
             Ok(events) => {
                 let relevant = events
                     .iter()
-                    .any(|ev| ev.event.paths.iter().any(|p| !path_is_git_internal(p)));
+                    .any(|ev| ev.event.paths.iter().any(|p| path_is_relevant(p)));
                 if relevant {
                     let _ = app.emit("repo:changed", ());
                 }
@@ -49,9 +50,46 @@ pub fn start(workdir: &Path, app: AppHandle) -> Result<RepoWatcher, String> {
     })
 }
 
-fn path_is_git_internal(path: &Path) -> bool {
-    path.components().any(|c| match c {
-        Component::Normal(name) => name == ".git",
+fn path_is_relevant(path: &Path) -> bool {
+    let mut inside_git = false;
+    let mut first_git_component: Option<&OsStr> = None;
+    let mut last_git_component: Option<&OsStr> = None;
+
+    for component in path.components() {
+        match component {
+            Component::Normal(name) if name == ".git" => inside_git = true,
+            Component::Normal(name) if inside_git => {
+                if first_git_component.is_none() {
+                    first_git_component = Some(name);
+                }
+                last_git_component = Some(name);
+            }
+            _ => {}
+        }
+    }
+
+    if !inside_git {
+        return true;
+    }
+    let Some(first_git_component) = first_git_component else {
+        return false;
+    };
+    if last_git_component
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".lock"))
+    {
+        return false;
+    }
+
+    match first_git_component.to_str() {
+        Some(
+            "HEAD" | "index" | "packed-refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD"
+            | "REBASE_HEAD" | "ORIG_HEAD" | "refs",
+        ) => true,
+        Some(
+            "objects" | "logs" | "hooks" | "info" | "lfs" | "fsmonitor--daemon" | "rr-cache"
+            | "worktrees" | "modules" | "COMMIT_EDITMSG" | "FETCH_HEAD",
+        ) => false,
         _ => false,
-    })
+    }
 }

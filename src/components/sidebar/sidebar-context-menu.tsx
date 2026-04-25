@@ -1,8 +1,5 @@
 import type { CSSProperties } from "react";
-import type {
-  ContextMenuItem,
-  ContextMenuOpenContext,
-} from "@pierre/trees";
+import type { ContextMenuItem, ContextMenuOpenContext } from "@pierre/trees";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { cn } from "@/lib/utils";
 
@@ -83,9 +80,7 @@ export function SidebarContextMenu({
               "z-50 min-w-40 origin-(--transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none",
             )}
           >
-            {!isStaged && (
-              <Item onClick={() => onStage(item.path)}>Stage</Item>
-            )}
+            {!isStaged && <Item onClick={() => onStage(item.path)}>Stage</Item>}
             {isStaged && (
               <Item onClick={() => onUnstage(item.path)}>Unstage</Item>
             )}

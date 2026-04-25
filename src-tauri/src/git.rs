@@ -828,44 +828,95 @@ pub fn get_file_contents_batch(
 }
 
 fn stage_path(repo: &Repository, path: &str) -> Result<(), String> {
-    let repo_path = Path::new(path);
+    let input_path = Path::new(path);
+    validate_repo_relative_path(input_path)?;
+    let mut repo_path = PathBuf::new();
+    for component in input_path.components() {
+        if let Component::Normal(part) = component {
+            repo_path.push(part);
+        }
+    }
+
+    let is_directory_path = path.ends_with('/');
     let workdir = repo.workdir().ok_or("bare repository")?;
-    let exists_in_workdir = workdir.join(repo_path).exists();
+    let target = workdir.join(&repo_path);
 
     let mut index = repo
         .index()
         .map_err(|e| format!("failed to get index: {e}"))?;
 
-    if exists_in_workdir {
-        index
-            .add_path(repo_path)
-            .map_err(|e| format!("failed to stage file: {e}"))?;
-    } else {
-        let status = match repo.status_file(repo_path) {
-            Ok(status) => status,
-            Err(_) => return Ok(()),
-        };
-
-        if !status.intersects(
-            Status::WT_DELETED
+    if is_directory_path || target.is_dir() {
+        let paths = collect_status_paths(
+            repo,
+            Status::WT_NEW
+                | Status::WT_MODIFIED
+                | Status::WT_DELETED
                 | Status::WT_RENAMED
-                | Status::WT_TYPECHANGE
-                | Status::INDEX_DELETED
-                | Status::INDEX_RENAMED
-                | Status::INDEX_TYPECHANGE,
-        ) {
-            return Ok(());
+                | Status::WT_TYPECHANGE,
+            (!repo_path.as_os_str().is_empty()).then_some(repo_path.as_path()),
+        )?;
+
+        for (path, status) in paths {
+            let child_path = Path::new(&path);
+            if child_path == repo_path || !child_path.starts_with(&repo_path) {
+                continue;
+            }
+
+            stage_index_path(&mut index, workdir, child_path, Some(status))?;
         }
 
         index
-            .remove_path(repo_path)
-            .map_err(|e| format!("failed to stage file: {e}"))?;
+            .write()
+            .map_err(|e| format!("failed to write index: {e}"))?;
+
+        return Ok(());
     }
+
+    stage_index_path(
+        &mut index,
+        workdir,
+        &repo_path,
+        repo.status_file(&repo_path).ok(),
+    )?;
 
     index
         .write()
         .map_err(|e| format!("failed to write index: {e}"))?;
 
+    Ok(())
+}
+
+fn stage_index_path(
+    index: &mut Index,
+    workdir: &Path,
+    repo_path: &Path,
+    status: Option<Status>,
+) -> Result<(), String> {
+    if workdir.join(repo_path).exists() {
+        index
+            .add_path(repo_path)
+            .map_err(|e| format!("failed to stage file: {e}"))?;
+        return Ok(());
+    }
+
+    let Some(status) = status else {
+        return Ok(());
+    };
+
+    if !status.intersects(
+        Status::WT_DELETED
+            | Status::WT_RENAMED
+            | Status::WT_TYPECHANGE
+            | Status::INDEX_DELETED
+            | Status::INDEX_RENAMED
+            | Status::INDEX_TYPECHANGE,
+    ) {
+        return Ok(());
+    }
+
+    index
+        .remove_path(repo_path)
+        .map_err(|e| format!("failed to stage file: {e}"))?;
     Ok(())
 }
 
@@ -894,9 +945,16 @@ fn unstage_path(repo: &Repository, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String> {
+fn collect_status_paths(
+    repo: &Repository,
+    flags: Status,
+    pathspec: Option<&Path>,
+) -> Result<Vec<(String, Status)>, String> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
+    if let Some(pathspec) = pathspec {
+        opts.pathspec(pathspec).disable_pathspec_match(true);
+    }
 
     let statuses = repo
         .statuses(Some(&mut opts))
@@ -906,14 +964,19 @@ fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String
     for entry in statuses.iter() {
         if entry.status().intersects(flags) {
             if let Some(path) = entry.path() {
-                paths.push(path.to_string());
+                paths.push((path.to_string(), entry.status()));
             }
         }
     }
 
-    paths.sort();
-    paths.dedup();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    paths.dedup_by(|a, b| a.0 == b.0);
     Ok(paths)
+}
+
+fn collect_paths(repo: &Repository, flags: Status) -> Result<Vec<String>, String> {
+    collect_status_paths(repo, flags, None)
+        .map(|paths| paths.into_iter().map(|(path, _)| path).collect::<Vec<_>>())
 }
 
 #[tauri::command]
@@ -935,13 +998,14 @@ pub fn stage_all(state: State<AppState>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
 
-    let paths = collect_paths(
+    let paths = collect_status_paths(
         repo,
         Status::WT_NEW
             | Status::WT_MODIFIED
             | Status::WT_DELETED
             | Status::WT_RENAMED
             | Status::WT_TYPECHANGE,
+        None,
     )?;
 
     let workdir = repo.workdir().ok_or("bare repository")?;
@@ -950,35 +1014,9 @@ pub fn stage_all(state: State<AppState>) -> Result<(), String> {
         .index()
         .map_err(|e| format!("failed to get index: {e}"))?;
 
-    for path in &paths {
-        let repo_path = Path::new(path);
-        let exists_in_workdir = workdir.join(repo_path).exists();
-
-        if exists_in_workdir {
-            index
-                .add_path(repo_path)
-                .map_err(|e| format!("failed to stage file: {e}"))?;
-        } else {
-            let status = match repo.status_file(repo_path) {
-                Ok(status) => status,
-                Err(_) => continue,
-            };
-
-            if !status.intersects(
-                Status::WT_DELETED
-                    | Status::WT_RENAMED
-                    | Status::WT_TYPECHANGE
-                    | Status::INDEX_DELETED
-                    | Status::INDEX_RENAMED
-                    | Status::INDEX_TYPECHANGE,
-            ) {
-                continue;
-            }
-
-            index
-                .remove_path(repo_path)
-                .map_err(|e| format!("failed to stage file: {e}"))?;
-        }
+    for (path, status) in paths {
+        let repo_path = Path::new(&path);
+        stage_index_path(&mut index, workdir, repo_path, Some(status))?;
     }
 
     index
@@ -1140,12 +1178,17 @@ fn canonical_contained_target(workdir: &Path, relative_path: &Path) -> Result<Pa
 }
 
 #[tauri::command]
-pub fn commit(message: String, state: State<AppState>) -> Result<String, String> {
+pub fn commit(
+    message: String,
+    amend: Option<bool>,
+    state: State<AppState>,
+) -> Result<String, String> {
     let lock = state
         .repo
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let repo = lock.as_ref().ok_or("no repository open")?;
+    let amend = amend.unwrap_or(false);
 
     if message.trim().is_empty() {
         return Err("commit message cannot be empty".to_string());
@@ -1159,11 +1202,13 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
         .write_tree()
         .map_err(|e| format!("failed to write tree: {e}"))?;
 
-    // Reject empty commits (no changes staged)
-    if let Ok(head_ref) = repo.head() {
-        if let Ok(head_commit) = head_ref.peel_to_commit() {
-            if head_commit.tree_id() == tree_oid {
-                return Err("nothing to commit: index matches HEAD".to_string());
+    if !amend {
+        // Reject empty commits (no changes staged)
+        if let Ok(head_ref) = repo.head() {
+            if let Ok(head_commit) = head_ref.peel_to_commit() {
+                if head_commit.tree_id() == tree_oid {
+                    return Err("nothing to commit: index matches HEAD".to_string());
+                }
             }
         }
     }
@@ -1176,17 +1221,36 @@ pub fn commit(message: String, state: State<AppState>) -> Result<String, String>
         .signature()
         .map_err(|e| format!("failed to get signature: {e}"))?;
 
-    let oid = match repo.head() {
-        Ok(head_ref) => {
-            let parent = head_ref
-                .peel_to_commit()
-                .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
-            repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
-                .map_err(|e| format!("failed to create commit: {e}"))?
+    let oid = if amend {
+        let head_ref = repo
+            .head()
+            .map_err(|_| "cannot amend: no commit to amend".to_string())?;
+        let head_commit = head_ref
+            .peel_to_commit()
+            .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
+        head_commit
+            .amend(
+                Some("HEAD"),
+                Some(&sig),
+                Some(&sig),
+                None,
+                Some(&message),
+                Some(&tree),
+            )
+            .map_err(|e| format!("failed to amend commit: {e}"))?
+    } else {
+        match repo.head() {
+            Ok(head_ref) => {
+                let parent = head_ref
+                    .peel_to_commit()
+                    .map_err(|e| format!("failed to peel HEAD to commit: {e}"))?;
+                repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])
+                    .map_err(|e| format!("failed to create commit: {e}"))?
+            }
+            Err(_) => repo
+                .commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
+                .map_err(|e| format!("failed to create initial commit: {e}"))?,
         }
-        Err(_) => repo
-            .commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])
-            .map_err(|e| format!("failed to create initial commit: {e}"))?,
     };
 
     Ok(oid.to_string())
