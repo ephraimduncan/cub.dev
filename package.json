@@ -1,5 +1,5 @@
 {
-  "name": "cub-dev",
+  "name": "cub",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -21,6 +21,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

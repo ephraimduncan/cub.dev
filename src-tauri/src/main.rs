@@ -13,18 +13,18 @@ fn main() -> ExitCode {
     // First non-flag positional = launch path
     if let Some(path) = args.iter().find(|a| !a.starts_with('-')) {
         if let Ok(abs) = std::fs::canonicalize(path) {
-            cub_dev_lib::set_launch_path(abs);
+            cub_lib::set_launch_path(abs);
         } else {
             eprintln!("[cub] could not resolve path: {path}");
         }
     }
 
-    cub_dev_lib::run();
+    cub_lib::run();
     ExitCode::SUCCESS
 }
 
 fn run_mcp_mode() -> ExitCode {
-    let script = match cub_dev_lib::sidecar_script_path() {
+    let script = match cub_lib::sidecar_script_path() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("[cub] {e}");

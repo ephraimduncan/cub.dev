@@ -16,6 +16,8 @@ import {
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   stageFile,
   unstageFile,
@@ -59,6 +61,38 @@ function App() {
   );
   const expandSessionIdRef = useRef(0);
   const restoreOpenStartedRef = useRef(false);
+
+  // TODO: set `plugins.updater.pubkey` in src-tauri/tauri.conf.json before release.
+  // Until then, check() throws on the placeholder key and the .catch below swallows it.
+  // App runs normally; only auto-update is disabled.
+  useEffect(() => {
+    let cancelled = false;
+    check()
+      .then((update) => {
+        if (cancelled || !update) return;
+        toast.info(`Update ${update.version} available`, {
+          description: update.body ?? undefined,
+          action: {
+            label: "Install and relaunch",
+            onClick: async () => {
+              const toastId = toast.loading(`Installing ${update.version}...`);
+              try {
+                await update.downloadAndInstall();
+                toast.success("Update installed. Relaunching...", { id: toastId });
+                await relaunch();
+              } catch (e) {
+                toast.error(`Update install failed: ${e}`, { id: toastId });
+              }
+            },
+          },
+        });
+      })
+      .catch((e) => console.error("[cub] update check failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   // Listen for real-time comment status updates from the Tauri event bridge
   const { updateCommentStatus } = comments;

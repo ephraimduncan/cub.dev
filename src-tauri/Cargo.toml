@@ -1,5 +1,5 @@
 [package]
-name = "cub-dev"
+name = "cub"
 version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "cub_dev_lib"
+name = "cub_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -27,6 +27,8 @@ git2 = { version = "0.20", default-features = false, features = ["https", "ssh"]
 ureq = { version = "3", features = ["json"] }
 notify = "8"
 notify-debouncer-full = "0.5"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 
 # Optimize dependencies (libgit2 wrappers, etc.) in dev builds. Without this,
