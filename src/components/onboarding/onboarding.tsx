@@ -69,10 +69,12 @@ export function Onboarding({ onOpened }: OnboardingProps) {
     <main className="relative h-dvh overflow-y-auto bg-background text-foreground">
       <div className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 pt-24 pb-16">
         <header className="flex flex-col gap-3">
-          <img src="/logo.svg" alt="" width={48} height={48} className="size-12" />
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            cub
-          </h1>
+          <div className="flex items-center gap-3">
+            <img src="/logo-mark.svg" alt="" width={30} height={36} className="h-9 w-[30px]" />
+            <h1 className="font-heading text-3xl font-semibold tracking-tight">
+              cub
+            </h1>
+          </div>
           <p className="text-sm text-muted-foreground">
             Open a repository to start reviewing.
           </p>
