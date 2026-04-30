@@ -7,6 +7,7 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import App from "./App";
 import "./App.css";
 import { perfLog } from "@/lib/perf";
+import { DiffSettingsProvider } from "@/hooks/use-diff-settings";
 
 const diffWorkerPoolSize = 4;
 
@@ -40,7 +41,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       highlighterOptions={{}}
     >
       <ThemeProvider attribute="class" defaultTheme="system">
-        <App />
+        <DiffSettingsProvider>
+          <App />
+        </DiffSettingsProvider>
       </ThemeProvider>
     </WorkerPoolContextProvider>
   </React.StrictMode>,

@@ -76,6 +76,8 @@ pub fn run() {
             git::init_repo,
             git::get_repo_branch,
             git::discard_file,
+            git::list_branches,
+            git::checkout_branch,
             review_bridge::submit_review,
             get_launch_path,
         ])

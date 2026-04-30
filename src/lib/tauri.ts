@@ -138,3 +138,17 @@ export function discardFile(path: string): Promise<void> {
 export function getLaunchPath(): Promise<string | null> {
   return invoke<string | null>("get_launch_path");
 }
+
+
+export interface BranchInfo {
+  name: string;
+  is_current: boolean;
+}
+
+export function listBranches(): Promise<BranchInfo[]> {
+  return invoke<BranchInfo[]>("list_branches");
+}
+
+export function checkoutBranch(name: string): Promise<void> {
+  return invoke<void>("checkout_branch", { name });
+}

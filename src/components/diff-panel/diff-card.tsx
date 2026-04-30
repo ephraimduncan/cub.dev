@@ -38,12 +38,13 @@ import {
   DIFF_DELETION_COLOR,
 } from "@/lib/status";
 import type { ActionType, CommentMetadata } from "@/types/comments";
+import { useTheme } from "next-themes";
+import {
+  resolveFontFamily,
+  resolveLineHeight,
+  useDiffSettings,
+} from "@/hooks/use-diff-settings";
 
-const DIFF_CODE_STYLE = {
-  "--diffs-font-family": "'App Mono', monospace",
-  "--diffs-font-size": "13px",
-  "--diffs-line-height": "19px",
-} as React.CSSProperties;
 
 // Shared aggregators so 600 DiffCard mounts produce a single summary log
 // rather than 600 lines. Flush is debounced to the end of the mount burst.
@@ -155,6 +156,12 @@ export const DiffCard = memo(
   ) {
     const renderStartRef = useRef(performance.now());
     renderStartRef.current = performance.now();
+
+    const { resolvedTheme } = useTheme();
+    const themeType: "light" | "dark" =
+      resolvedTheme === "dark" ? "dark" : "light";
+    const { settings } = useDiffSettings();
+    const { font, fontSize } = settings;
 
     const [isOpen, setIsOpen] = useState(expanded);
     const isOpenRef = useRef(isOpen);
@@ -295,14 +302,20 @@ export const DiffCard = memo(
 
     const hideGap = kind === "added" || kind === "deleted";
 
-    const diffStyleOverride = useMemo(() => ({
-      ...DIFF_CODE_STYLE,
-      "--diffs-gap-block": hideGap ? "0px" : "4px",
-    }) as React.CSSProperties, [hideGap]);
+    const diffStyleOverride = useMemo(
+      () =>
+        ({
+          "--diffs-font-family": resolveFontFamily(font),
+          "--diffs-font-size": `${fontSize}px`,
+          "--diffs-line-height": `${resolveLineHeight(fontSize)}px`,
+          "--diffs-gap-block": hideGap ? "0px" : "4px",
+        }) as React.CSSProperties,
+      [font, fontSize, hideGap],
+    );
 
     const fileDiffOptions = useMemo(
       () => ({
-        themeType: "system" as const,
+        themeType,
         diffStyle,
         overflow: "wrap" as const,
         lineDiffType: "word-alt" as const,
@@ -318,7 +331,7 @@ export const DiffCard = memo(
         // overflow horizontally, so collapse it when we want a flush bottom.
         unsafeCSS: hideGap ? "[data-code] { overflow-x: clip; }" : undefined,
       }),
-      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm, hideGap],
+      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm, hideGap, themeType],
     );
 
     const textFileDiff =

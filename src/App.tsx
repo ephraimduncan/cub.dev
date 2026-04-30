@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { DiffPanel } from "@/components/diff-panel/diff-panel";
 import { Onboarding } from "@/components/onboarding/onboarding";
+import { StatusBar } from "@/components/status-bar/status-bar";
 import {
   clearLastOpenedRepo,
   readLastOpenedRepo,
@@ -27,6 +28,7 @@ import {
   submitReview,
   discardFile,
   getLaunchPath,
+  getRepoBranch,
   type CommitOptions,
   type FileEntry,
 } from "@/lib/tauri";
@@ -61,6 +63,7 @@ function App() {
   );
   const expandSessionIdRef = useRef(0);
   const restoreOpenStartedRef = useRef(false);
+  const [branch, setBranch] = useState<string | null>(null);
 
   // TODO: set `plugins.updater.pubkey` in src-tauri/tauri.conf.json before release.
   // Until then, check() throws on the placeholder key and the .catch below swallows it.
@@ -160,6 +163,24 @@ function App() {
       total: status.staged.length + status.unstaged.length,
     });
   }, [status]);
+
+  // Refresh the displayed branch whenever the repo opens or status reloads
+  // (which fires after stage/commit/checkout via the file watcher).
+  useEffect(() => {
+    if (!workdir) {
+      setBranch(null);
+      return;
+    }
+    let cancelled = false;
+    getRepoBranch(workdir)
+      .then((b) => {
+        if (!cancelled) setBranch(b);
+      })
+      .catch((e) => console.error("[cub] getRepoBranch failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [workdir, status]);
 
   useEffect(() => {
     perfLog("App", "diffs:change", {
@@ -412,6 +433,17 @@ function App() {
     }
   }, [collectAllComments, markSubmitted]);
 
+  const handleBranchSwitched = useCallback(async () => {
+    await refresh();
+    if (!workdir) return;
+    try {
+      const b = await getRepoBranch(workdir);
+      setBranch(b);
+    } catch (e) {
+      console.error("[cub] getRepoBranch failed after switch:", e);
+    }
+  }, [refresh, workdir]);
+
   // Honor `cub [path]` first; otherwise restore the last successfully opened repo.
   const openRef = useRef(open);
   openRef.current = open;
@@ -465,9 +497,10 @@ function App() {
 
   return (
     <>
+      <div className="flex h-full flex-col">
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full isolate border-t border-border bg-background"
+        className="flex-1 min-h-0 isolate border-t border-border bg-background"
       >
         <ResizablePanel defaultSize="25%" minSize={300} maxSize={400}>
           <Sidebar
@@ -515,6 +548,13 @@ function App() {
           />
         </ResizablePanel>
       </ResizablePanelGroup>
+        <StatusBar
+          workdir={workdir}
+          branch={branch}
+          onOpenRepo={open}
+          onBranchSwitched={handleBranchSwitched}
+        />
+      </div>
       <Toaster />
     </>
   );

@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use git2::build::{CheckoutBuilder, RepoBuilder};
-use git2::{FetchOptions, Index, Patch, RemoteCallbacks, Repository, Status, StatusOptions, Tree};
+use git2::{BranchType, FetchOptions, Index, Patch, RemoteCallbacks, Repository, Status, StatusOptions, Tree};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1411,4 +1411,62 @@ pub fn get_repo_branch(path: String) -> Result<Option<String>, String> {
         Err(_) => return Ok(None),
     };
     Ok(head.shorthand().map(|s| s.to_string()))
+}
+
+
+#[derive(Serialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_current: bool,
+}
+
+/// List local branches in the currently open repository, sorted alphabetically.
+/// `is_current` is true for the branch HEAD currently points at (if any).
+#[tauri::command]
+pub fn list_branches(state: State<AppState>) -> Result<Vec<BranchInfo>, String> {
+    let lock = state.repo.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+    let head_name = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    let branches = repo
+        .branches(Some(BranchType::Local))
+        .map_err(|e| format!("branches: {e}"))?;
+    let mut out: Vec<BranchInfo> = Vec::new();
+    for entry in branches {
+        let (branch, _) = entry.map_err(|e| format!("branch entry: {e}"))?;
+        if let Ok(Some(name)) = branch.name() {
+            let name = name.to_string();
+            let is_current = head_name.as_deref() == Some(name.as_str());
+            out.push(BranchInfo { name, is_current });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Switch the currently open repository to a local branch. Refuses to clobber
+/// uncommitted changes (git2 default "safe" checkout strategy).
+#[tauri::command]
+pub fn checkout_branch(
+    name: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let lock = state.repo.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    let repo = lock.as_ref().ok_or("no repository open")?;
+    let refname = format!("refs/heads/{name}");
+    let obj = repo
+        .revparse_single(&refname)
+        .map_err(|e| format!("branch not found: {e}"))?;
+    let mut co = CheckoutBuilder::new();
+    repo.checkout_tree(&obj, Some(&mut co))
+        .map_err(|e| format!("checkout failed: {e}"))?;
+    repo.set_head(&refname)
+        .map_err(|e| format!("set_head failed: {e}"))?;
+    // Branch switches do not always trigger fs events the watcher notices in
+    // time, so kick a refresh explicitly.
+    let _ = app.emit("repo:changed", json!({}));
+    Ok(())
 }
