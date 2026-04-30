@@ -68,7 +68,8 @@ export function Onboarding({ onOpened }: OnboardingProps) {
   return (
     <main className="relative h-dvh overflow-y-auto bg-background text-foreground">
       <div className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 pt-24 pb-16">
-        <header className="flex flex-col gap-1">
+        <header className="flex flex-col gap-3">
+          <img src="/logo.svg" alt="" width={48} height={48} className="size-12" />
           <h1 className="font-heading text-3xl font-semibold tracking-tight">
             cub
           </h1>
