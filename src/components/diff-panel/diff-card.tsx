@@ -1,9 +1,7 @@
 import {
-  forwardRef,
   memo,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -66,7 +64,8 @@ interface DiffCardBaseProps {
   deletions: number;
   kind: ChangeKind;
   diffStyle: "unified" | "split";
-  expanded: boolean;
+  open: boolean;
+  onOpenChange: (path: string, open: boolean) => void;
   expandAllSession: ExpandAllSession | null;
   onExpandAllMetric: (metric: ExpandAllCardMetric) => void;
   annotations: DiffLineAnnotation<CommentMetadata>[];
@@ -110,12 +109,6 @@ type DiffCardProps = DiffCardBaseProps &
       }
   );
 
-export interface DiffCardHandle {
-  element: HTMLDivElement | null;
-  isOpen: () => boolean;
-  expand: () => void;
-}
-
 function getBinaryDiffMessage(
   kind: ChangeKind,
   oldBinary: boolean,
@@ -132,163 +125,131 @@ function getBinaryDiffMessage(
   return "Binary file changed. Text diff unavailable.";
 }
 
-export const DiffCard = memo(
-  forwardRef<DiffCardHandle, DiffCardProps>(function DiffCard(
-    {
-      filePath,
-      additions,
-      deletions,
-      kind,
-      diffStyle,
-      expanded,
-      expandAllSession,
-      onExpandAllMetric,
-      annotations,
-      hasOpenForm,
-      onAddAnnotation,
-      onCancelAnnotation,
-      onSubmitAnnotation,
-      onDeleteAnnotation,
-      totalLines,
-      ...contentProps
+export const DiffCard = memo(function DiffCard({
+  filePath,
+  additions,
+  deletions,
+  kind,
+  diffStyle,
+  open,
+  onOpenChange,
+  expandAllSession,
+  onExpandAllMetric,
+  annotations,
+  hasOpenForm,
+  onAddAnnotation,
+  onCancelAnnotation,
+  onSubmitAnnotation,
+  onDeleteAnnotation,
+  totalLines,
+  ...contentProps
+}: DiffCardProps) {
+  const renderStartRef = useRef(performance.now());
+  renderStartRef.current = performance.now();
+
+  const { resolvedTheme } = useTheme();
+  const themeType: "light" | "dark" =
+    resolvedTheme === "dark" ? "dark" : "light";
+  const { settings } = useDiffSettings();
+  const { font, fontSize } = settings;
+
+  const mountStartRef = useRef(performance.now());
+  const previousOpenRef = useRef(open);
+  const openTransitionRef = useRef<ExpandAllSession | null>(null);
+  const mountedContentSessionRef = useRef<number | null>(null);
+  const committedContentSessionRef = useRef<number | null>(null);
+  const contentKind = contentProps.contentKind;
+
+  useEffect(() => {
+    const ms = performance.now() - mountStartRef.current;
+    mountAgg.record(filePath, ms, totalLines);
+    scheduleFlush();
+    // Only fire on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useLayoutEffect(() => {
+    const ms = performance.now() - renderStartRef.current;
+    renderAgg.record(filePath, ms, totalLines);
+    scheduleFlush();
+  });
+
+  // Track open transitions for expand-all metrics.
+  useLayoutEffect(() => {
+    const wasOpen = previousOpenRef.current;
+    previousOpenRef.current = open;
+    if (open && !wasOpen && expandAllSession) {
+      openTransitionRef.current = expandAllSession;
+      mountedContentSessionRef.current = null;
+      committedContentSessionRef.current = null;
+      onExpandAllMetric({
+        sessionId: expandAllSession.id,
+        path: filePath,
+        phase: "propSync",
+        ms: +(performance.now() - expandAllSession.startedAt).toFixed(2),
+        contentKind,
+      });
+    } else if (!open) {
+      openTransitionRef.current = null;
+      mountedContentSessionRef.current = null;
+      committedContentSessionRef.current = null;
+    }
+  }, [contentKind, expandAllSession, open, filePath, onExpandAllMetric]);
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => onOpenChange(filePath, next),
+    [filePath, onOpenChange],
+  );
+
+  const [selectedLines, setSelectedLines] =
+    useState<SelectedLineRange | null>(null);
+
+  const parts = filePath.split("/");
+  const filename = parts.pop() ?? filePath;
+  const dir = parts.length > 0 ? parts.join("/") + "/" : "";
+
+  const addAnnotationForRange = useCallback(
+    (range: SelectedLineRange) => {
+      const target = getAnnotationTarget(range);
+      onAddAnnotation(
+        filePath,
+        target.side,
+        target.lineStart,
+        target.lineEnd,
+      );
     },
-    ref,
-  ) {
-    const renderStartRef = useRef(performance.now());
-    renderStartRef.current = performance.now();
+    [filePath, onAddAnnotation],
+  );
 
-    const { resolvedTheme } = useTheme();
-    const themeType: "light" | "dark" =
-      resolvedTheme === "dark" ? "dark" : "light";
-    const { settings } = useDiffSettings();
-    const { font, fontSize } = settings;
+  const handleLineSelectionEnd = useCallback(
+    (range: SelectedLineRange | null) => {
+      setSelectedLines(range);
+      if (range == null) return;
+      addAnnotationForRange(range);
+      setSelectedLines(null);
+    },
+    [addAnnotationForRange],
+  );
 
-    const [isOpen, setIsOpen] = useState(expanded);
-    const isOpenRef = useRef(isOpen);
-    isOpenRef.current = isOpen;
-    const elementRef = useRef<HTMLDivElement | null>(null);
-    const mountStartRef = useRef(performance.now());
-    const previousExpandedRef = useRef(expanded);
-    const openTransitionRef = useRef<ExpandAllSession | null>(null);
-    const mountedContentSessionRef = useRef<number | null>(null);
-    const committedContentSessionRef = useRef<number | null>(null);
-    const contentKind = contentProps.contentKind;
-
-    useEffect(() => {
-      const ms = performance.now() - mountStartRef.current;
-      mountAgg.record(filePath, ms, totalLines);
-      scheduleFlush();
-      // Only fire on mount.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    useLayoutEffect(() => {
-      const ms = performance.now() - renderStartRef.current;
-      renderAgg.record(filePath, ms, totalLines);
-      scheduleFlush();
-    });
-
-    useImperativeHandle(
-      ref,
-      () => ({
-        get element() {
-          return elementRef.current;
-        },
-        isOpen: () => isOpenRef.current,
-        expand: () => setIsOpen(true),
-      }),
-      [],
-    );
-
-    // Sync when parent toggles expand/collapse all.
-    // useLayoutEffect (not useEffect) to update before paint — no visible flicker.
-    useLayoutEffect(() => {
-      const wasExpanded = previousExpandedRef.current;
-      previousExpandedRef.current = expanded;
-      if (expanded && !wasExpanded && expandAllSession) {
-        openTransitionRef.current = expandAllSession;
-        mountedContentSessionRef.current = null;
-        committedContentSessionRef.current = null;
-        onExpandAllMetric({
-          sessionId: expandAllSession.id,
-          path: filePath,
-          phase: "propSync",
-          ms: +(performance.now() - expandAllSession.startedAt).toFixed(2),
-          contentKind,
-        });
-      } else if (!expanded) {
-        openTransitionRef.current = null;
-        mountedContentSessionRef.current = null;
-        committedContentSessionRef.current = null;
-      }
-      setIsOpen(expanded);
-    }, [contentKind, expandAllSession, expanded, filePath, onExpandAllMetric]);
-    const [selectedLines, setSelectedLines] =
-      useState<SelectedLineRange | null>(null);
-
-    const parts = filePath.split("/");
-    const filename = parts.pop() ?? filePath;
-    const dir = parts.length > 0 ? parts.join("/") + "/" : "";
-
-    const addAnnotationForRange = useCallback(
-      (range: SelectedLineRange) => {
-        const target = getAnnotationTarget(range);
-        onAddAnnotation(
-          filePath,
-          target.side,
-          target.lineStart,
-          target.lineEnd,
-        );
-      },
-      [filePath, onAddAnnotation],
-    );
-
-    const handleLineSelectionEnd = useCallback(
-      (range: SelectedLineRange | null) => {
-        setSelectedLines(range);
-        if (range == null) return;
-        addAnnotationForRange(range);
-        setSelectedLines(null);
-      },
-      [addAnnotationForRange],
-    );
-
-    const renderAnnotation = useCallback(
-      (annotation: DiffLineAnnotation<CommentMetadata>) => {
-        if (
-          annotation.metadata.status === "draft" &&
-          !annotation.metadata.text
-        ) {
-          return (
-            <CommentForm
-              onSubmit={(text, actionType) =>
-                onSubmitAnnotation(
-                  filePath,
-                  annotation.side,
-                  annotation.lineNumber,
-                  text,
-                  actionType,
-                )
-              }
-              onCancel={() =>
-                onCancelAnnotation(
-                  filePath,
-                  annotation.side,
-                  annotation.lineNumber,
-                )
-              }
-            />
-          );
-        }
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<CommentMetadata>) => {
+      if (
+        annotation.metadata.status === "draft" &&
+        !annotation.metadata.text
+      ) {
         return (
-          <CommentBubble
-            text={annotation.metadata.text!}
-            actionType={annotation.metadata.actionType!}
-            status={annotation.metadata.status}
-            summary={annotation.metadata.summary}
-            dismissReason={annotation.metadata.dismissReason}
-            onDelete={() =>
-              onDeleteAnnotation(
+          <CommentForm
+            onSubmit={(text, actionType) =>
+              onSubmitAnnotation(
+                filePath,
+                annotation.side,
+                annotation.lineNumber,
+                text,
+                actionType,
+              )
+            }
+            onCancel={() =>
+              onCancelAnnotation(
                 filePath,
                 annotation.side,
                 annotation.lineNumber,
@@ -296,165 +257,181 @@ export const DiffCard = memo(
             }
           />
         );
-      },
-      [filePath, onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
-    );
+      }
+      return (
+        <CommentBubble
+          text={annotation.metadata.text!}
+          actionType={annotation.metadata.actionType!}
+          status={annotation.metadata.status}
+          summary={annotation.metadata.summary}
+          dismissReason={annotation.metadata.dismissReason}
+          onDelete={() =>
+            onDeleteAnnotation(
+              filePath,
+              annotation.side,
+              annotation.lineNumber,
+            )
+          }
+        />
+      );
+    },
+    [filePath, onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
+  );
 
-    const hideGap = kind === "added" || kind === "deleted";
+  const hideGap = kind === "added" || kind === "deleted";
 
-    const diffStyleOverride = useMemo(
-      () =>
-        ({
-          "--diffs-font-family": resolveFontFamily(font),
-          "--diffs-font-size": `${fontSize}px`,
-          "--diffs-line-height": `${resolveLineHeight(fontSize)}px`,
-          "--diffs-gap-block": hideGap ? "0px" : "4px",
-        }) as React.CSSProperties,
-      [font, fontSize, hideGap],
-    );
+  const diffStyleOverride = useMemo(
+    () =>
+      ({
+        "--diffs-font-family": resolveFontFamily(font),
+        "--diffs-font-size": `${fontSize}px`,
+        "--diffs-line-height": `${resolveLineHeight(fontSize)}px`,
+        "--diffs-gap-block": hideGap ? "0px" : "4px",
+      }) as React.CSSProperties,
+    [font, fontSize, hideGap],
+  );
 
-    const fileDiffOptions = useMemo(
-      () => ({
-        themeType,
-        diffStyle,
-        overflow: "wrap" as const,
-        lineDiffType: "word-alt" as const,
-        disableFileHeader: true,
-        expansionLineCount: 5,
-        hunkSeparators: "line-info" as const,
-        enableLineSelection: !hasOpenForm,
-        enableGutterUtility: !hasOpenForm,
-        onLineSelectionEnd: handleLineSelectionEnd,
-        onGutterUtilityClick: addAnnotationForRange,
-        // [data-code] uses `overflow: scroll clip` and reserves 6px for the
-        // horizontal scrollbar gutter at the bottom. With wrap mode we never
-        // overflow horizontally, so collapse it when we want a flush bottom.
-        unsafeCSS: hideGap ? "[data-code] { overflow-x: clip; }" : undefined,
-      }),
-      [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm, hideGap, themeType],
-    );
+  const fileDiffOptions = useMemo(
+    () => ({
+      themeType,
+      diffStyle,
+      overflow: "wrap" as const,
+      lineDiffType: "word-alt" as const,
+      disableFileHeader: true,
+      expansionLineCount: 5,
+      hunkSeparators: "line-info" as const,
+      enableLineSelection: !hasOpenForm,
+      enableGutterUtility: !hasOpenForm,
+      onLineSelectionEnd: handleLineSelectionEnd,
+      onGutterUtilityClick: addAnnotationForRange,
+      // [data-code] uses `overflow: scroll clip` and reserves 6px for the
+      // horizontal scrollbar gutter at the bottom. With wrap mode we never
+      // overflow horizontally, so collapse it when we want a flush bottom.
+      unsafeCSS: hideGap ? "[data-code] { overflow-x: clip; }" : undefined,
+    }),
+    [addAnnotationForRange, diffStyle, handleLineSelectionEnd, hasOpenForm, hideGap, themeType],
+  );
 
-    const textFileDiff =
-      contentProps.contentKind === "text" ? contentProps.fileDiff : null;
-    const binaryMessage =
-      contentProps.contentKind === "binary"
-        ? getBinaryDiffMessage(
-            kind,
-            contentProps.oldBinary,
-            contentProps.newBinary,
-          )
-        : null;
-    const contentMountRef = useCallback(
-      (node: HTMLDivElement | null) => {
-        if (!node) return;
-        const transition = openTransitionRef.current;
-        if (!transition || mountedContentSessionRef.current === transition.id) {
-          return;
-        }
-        mountedContentSessionRef.current = transition.id;
-        onExpandAllMetric({
-          sessionId: transition.id,
-          path: filePath,
-          phase: "contentMount",
-          ms: +(performance.now() - transition.startedAt).toFixed(2),
-          contentKind,
-        });
-      },
-      [contentKind, filePath, onExpandAllMetric],
-    );
-    const content = useMemo(
-      () =>
-        contentProps.contentKind === "text" ? (
-          <div ref={contentMountRef}>
-            <PierreFileDiff<CommentMetadata>
-              fileDiff={textFileDiff!}
-              className="min-w-0 overflow-hidden"
-              style={diffStyleOverride}
-              options={fileDiffOptions}
-              lineAnnotations={annotations}
-              selectedLines={selectedLines}
-              renderAnnotation={renderAnnotation}
-            />
-          </div>
-        ) : (
-          <div ref={contentMountRef} className="px-4 py-6 text-sm text-muted-foreground">
-            <p>{binaryMessage}</p>
-          </div>
-        ),
-      [
-        annotations,
-        binaryMessage,
-        contentKind,
-        contentMountRef,
-        contentProps.contentKind,
-        diffStyleOverride,
-        fileDiffOptions,
-        renderAnnotation,
-        selectedLines,
-        textFileDiff,
-      ],
-    );
-
-    useLayoutEffect(() => {
+  const textFileDiff =
+    contentProps.contentKind === "text" ? contentProps.fileDiff : null;
+  const binaryMessage =
+    contentProps.contentKind === "binary"
+      ? getBinaryDiffMessage(
+          kind,
+          contentProps.oldBinary,
+          contentProps.newBinary,
+        )
+      : null;
+  const contentMountRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
       const transition = openTransitionRef.current;
-      if (
-        !isOpen ||
-        !transition ||
-        committedContentSessionRef.current === transition.id
-      ) {
+      if (!transition || mountedContentSessionRef.current === transition.id) {
         return;
       }
-      committedContentSessionRef.current = transition.id;
+      mountedContentSessionRef.current = transition.id;
       onExpandAllMetric({
         sessionId: transition.id,
         path: filePath,
-        phase: "renderCommit",
+        phase: "contentMount",
         ms: +(performance.now() - transition.startedAt).toFixed(2),
         contentKind,
       });
-      openTransitionRef.current = null;
-    });
+    },
+    [contentKind, filePath, onExpandAllMetric],
+  );
+  const content = useMemo(
+    () =>
+      contentProps.contentKind === "text" ? (
+        <div ref={contentMountRef}>
+          <PierreFileDiff<CommentMetadata>
+            fileDiff={textFileDiff!}
+            className="min-w-0 overflow-hidden"
+            style={diffStyleOverride}
+            options={fileDiffOptions}
+            lineAnnotations={annotations}
+            selectedLines={selectedLines}
+            renderAnnotation={renderAnnotation}
+          />
+        </div>
+      ) : (
+        <div ref={contentMountRef} className="px-4 py-6 text-sm text-muted-foreground">
+          <p>{binaryMessage}</p>
+        </div>
+      ),
+    [
+      annotations,
+      binaryMessage,
+      contentKind,
+      contentMountRef,
+      contentProps.contentKind,
+      diffStyleOverride,
+      fileDiffOptions,
+      renderAnnotation,
+      selectedLines,
+      textFileDiff,
+    ],
+  );
 
-    return (
-      <div ref={elementRef} className="min-w-0 w-full overflow-clip">
-        <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-          <CollapsibleTrigger
-            render={<button type="button" />}
-            className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
-          >
-            <IconChevronDown
+  useLayoutEffect(() => {
+    const transition = openTransitionRef.current;
+    if (
+      !open ||
+      !transition ||
+      committedContentSessionRef.current === transition.id
+    ) {
+      return;
+    }
+    committedContentSessionRef.current = transition.id;
+    onExpandAllMetric({
+      sessionId: transition.id,
+      path: filePath,
+      phase: "renderCommit",
+      ms: +(performance.now() - transition.startedAt).toFixed(2),
+      contentKind,
+    });
+    openTransitionRef.current = null;
+  });
+
+  return (
+    <div className="min-w-0 w-full overflow-clip">
+      <Collapsible open={open} onOpenChange={handleOpenChange}>
+        <CollapsibleTrigger
+          render={<button type="button" />}
+          className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
+        >
+          <IconChevronDown
+            className={cn(
+              "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
+          <div className="min-w-0 flex-1">
+            <p
               className={cn(
-                "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
-                !isOpen && "-rotate-90",
+                "truncate text-sm font-medium",
+                FILE_STATUS[kind]?.color ?? "text-foreground",
               )}
-            />
-            <div className="min-w-0 flex-1">
-              <p
-                className={cn(
-                  "truncate text-sm font-medium",
-                  FILE_STATUS[kind]?.color ?? "text-foreground",
-                )}
-              >
-                {filename}
-              </p>
-              {dir && (
-                <p className="truncate text-xs text-muted-foreground">{dir}</p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
-              {additions > 0 && (
-                <span className={DIFF_ADDITION_COLOR}>+{additions}</span>
-              )}
-              {deletions > 0 && (
-                <span className={DIFF_DELETION_COLOR}>-{deletions}</span>
-              )}
-            </div>
-          </CollapsibleTrigger>
-          <CollapsibleContent>{content}</CollapsibleContent>
-        </Collapsible>
-      </div>
-    );
-  }),
-);
+            >
+              {filename}
+            </p>
+            {dir && (
+              <p className="truncate text-xs text-muted-foreground">{dir}</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
+            {additions > 0 && (
+              <span className={DIFF_ADDITION_COLOR}>+{additions}</span>
+            )}
+            {deletions > 0 && (
+              <span className={DIFF_DELETION_COLOR}>-{deletions}</span>
+            )}
+          </div>
+        </CollapsibleTrigger>
+        <CollapsibleContent>{content}</CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+});
 
 DiffCard.displayName = "DiffCard";

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   AnnotationSide,
   DiffLineAnnotation,
@@ -8,7 +9,7 @@ import { parseDiffFromFile } from "@pierre/diffs";
 import { useWorkerPool } from "@pierre/diffs/react";
 import type { WorkerStats } from "@pierre/diffs/worker";
 import { DiffToolbar } from "./diff-toolbar";
-import { DiffCard, type DiffCardHandle } from "./diff-card";
+import { DiffCard } from "./diff-card";
 import type { ChangeKind, FileEntry } from "@/lib/tauri";
 import type { FileDiffContents } from "@/hooks/use-diffs";
 import type { ActionType, CommentMetadata } from "@/types/comments";
@@ -184,53 +185,8 @@ export function DiffPanel({
   submittingReview,
 }: DiffPanelProps) {
   const workerPool = useWorkerPool();
-  const cardHandles = useRef<Map<string, DiffCardHandle>>(new Map());
-  const refCallbacks = useRef<
-    Map<string, (handle: DiffCardHandle | null) => void>
-  >(new Map());
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const expandAllMetricsRef = useRef<ExpandAllSessionMetrics | null>(null);
-
-  const getCardRef = useCallback((path: string) => {
-    const existing = refCallbacks.current.get(path);
-    if (existing) return existing;
-    const callback = (handle: DiffCardHandle | null) => {
-      if (handle) {
-        cardHandles.current.set(path, handle);
-      } else {
-        cardHandles.current.delete(path);
-        refCallbacks.current.delete(path);
-      }
-    };
-    refCallbacks.current.set(path, callback);
-    return callback;
-  }, []);
-
-  useEffect(() => {
-    if (!scrollToPath) return;
-    const handle = cardHandles.current.get(scrollToPath);
-    if (handle) {
-      const el = handle.element;
-      if (!handle.isOpen()) {
-        handle.expand();
-        el?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else {
-        const container = scrollContainerRef.current;
-        if (el && container) {
-          const cRect = container.getBoundingClientRect();
-          const eRect = el.getBoundingClientRect();
-          const fullyVisible =
-            eRect.top >= cRect.top && eRect.bottom <= cRect.bottom;
-          if (!fullyVisible) {
-            el.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
-        }
-      }
-    }
-    onScrollComplete();
-    // scrollNonce intentionally in deps: re-fires when the same path is
-    // selected again (after manual collapse).
-  }, [scrollToPath, scrollNonce, onScrollComplete]);
 
   const finalizeExpandAllSession = useCallback(
     (reason: string) => {
@@ -384,6 +340,100 @@ export function DiffPanel({
     return result;
   }, [files, diffs]);
 
+  // Per-path overrides on top of the allExpanded baseline.
+  // The map only stores paths whose effective state diverges from
+  // allExpanded. Toggle expand-all clears all overrides; user toggles add
+  // an entry; new files inherit allExpanded automatically.
+  const [openOverrides, setOpenOverrides] = useState<Map<string, boolean>>(
+    () => new Map(),
+  );
+
+  // Reset overrides whenever the allExpanded baseline flips.
+  useEffect(() => {
+    setOpenOverrides((prev) => (prev.size === 0 ? prev : new Map()));
+  }, [allExpanded]);
+
+  // Prune overrides for paths that no longer exist in parsedFiles.
+  useEffect(() => {
+    setOpenOverrides((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(parsedFiles.map((file) => file.filePath));
+      let changed = false;
+      const next = new Map<string, boolean>();
+      for (const [path, open] of prev) {
+        if (valid.has(path)) next.set(path, open);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [parsedFiles]);
+
+  const handlePathOpenChange = useCallback(
+    (path: string, next: boolean) => {
+      setOpenOverrides((prev) => {
+        const updated = new Map(prev);
+        if (next === allExpanded) {
+          if (!prev.has(path)) return prev;
+          updated.delete(path);
+        } else {
+          if (prev.get(path) === next) return prev;
+          updated.set(path, next);
+        }
+        return updated;
+      });
+    },
+    [allExpanded],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: parsedFiles.length,
+    getScrollElement: () => scrollContainerRef.current,
+    // Collapsed-card height is ~60px (filename + dir line + padding).
+    // Expanded cards remeasure via measureElement / ResizeObserver.
+    estimateSize: () => 60,
+    // Generous overscan so fast macOS momentum scroll doesn't outpace
+    // React mount and reveal empty background. 80 rows × ~60px ≈ 4800px
+    // pre-mounted buffer in each direction. Collapsed cards are cheap
+    // (header only — PierreFileDiff only mounts when expanded), so the
+    // memory/render cost of carrying ~160 mounted rows is negligible.
+    overscan: 80,
+    getItemKey: (index) => parsedFiles[index].filePath,
+    // Batch ResizeObserver-driven measurements into rAF so they don't
+    // cascade re-renders mid-scroll.
+    useAnimationFrameWithResizeObserver: true,
+  });
+
+  const pathToIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < parsedFiles.length; i++) {
+      map.set(parsedFiles[i].filePath, i);
+    }
+    return map;
+  }, [parsedFiles]);
+
+  useEffect(() => {
+    if (!scrollToPath) return;
+    const index = pathToIndex.get(scrollToPath);
+    if (index == null) {
+      onScrollComplete();
+      return;
+    }
+    setOpenOverrides((prev) => {
+      const effective = prev.has(scrollToPath)
+        ? prev.get(scrollToPath)!
+        : allExpanded;
+      if (effective) return prev;
+      const next = new Map(prev);
+      next.set(scrollToPath, true);
+      return next;
+    });
+    virtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" });
+    onScrollComplete();
+    // scrollNonce intentionally in deps: re-fires when the same path is
+    // selected again (after manual collapse).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToPath, scrollNonce, onScrollComplete]);
+
   useEffect(() => {
     if (!expandAllSession || !allExpanded) {
       finalizeExpandAllSession("cancelled");
@@ -500,6 +550,8 @@ export function DiffPanel({
     );
   }
 
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
       {parsedFiles.length > 0 && (
@@ -525,39 +577,61 @@ export function DiffPanel({
             </p>
           </div>
         ) : (
-          parsedFiles.map((parsedFile) => (
-            <DiffCard
-              key={parsedFile.filePath}
-              ref={getCardRef(parsedFile.filePath)}
-              filePath={parsedFile.filePath}
-              additions={parsedFile.additions}
-              deletions={parsedFile.deletions}
-              kind={parsedFile.kind}
-              diffStyle={diffStyle}
-              expanded={allExpanded}
-              expandAllSession={expandAllSession}
-              onExpandAllMetric={handleExpandAllMetric}
-              annotations={
-                annotationsByFile.get(parsedFile.filePath) ?? EMPTY_ANNOTATIONS
-              }
-              hasOpenForm={hasOpenForm}
-              onAddAnnotation={onAddAnnotation}
-              onCancelAnnotation={onCancelAnnotation}
-              onSubmitAnnotation={onSubmitAnnotation}
-              onDeleteAnnotation={onDeleteAnnotation}
-              totalLines={parsedFile.contentKind === "text" ? parsedFile.totalLines : 0}
-              {...(parsedFile.contentKind === "text"
-                ? {
-                    contentKind: "text" as const,
-                    fileDiff: parsedFile.fileDiff,
-                  }
-                : {
-                    contentKind: "binary" as const,
-                    oldBinary: parsedFile.oldBinary,
-                    newBinary: parsedFile.newBinary,
-                  })}
-            />
-          ))
+          <div
+            className="relative w-full"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
+            {virtualItems.map((virtualRow) => {
+              const parsedFile = parsedFiles[virtualRow.index];
+              return (
+                <div
+                  key={parsedFile.filePath}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 right-0 top-0"
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <DiffCard
+                    filePath={parsedFile.filePath}
+                    additions={parsedFile.additions}
+                    deletions={parsedFile.deletions}
+                    kind={parsedFile.kind}
+                    diffStyle={diffStyle}
+                    open={openOverrides.get(parsedFile.filePath) ?? allExpanded}
+                    onOpenChange={handlePathOpenChange}
+                    expandAllSession={expandAllSession}
+                    onExpandAllMetric={handleExpandAllMetric}
+                    annotations={
+                      annotationsByFile.get(parsedFile.filePath) ??
+                      EMPTY_ANNOTATIONS
+                    }
+                    hasOpenForm={hasOpenForm}
+                    onAddAnnotation={onAddAnnotation}
+                    onCancelAnnotation={onCancelAnnotation}
+                    onSubmitAnnotation={onSubmitAnnotation}
+                    onDeleteAnnotation={onDeleteAnnotation}
+                    totalLines={
+                      parsedFile.contentKind === "text"
+                        ? parsedFile.totalLines
+                        : 0
+                    }
+                    {...(parsedFile.contentKind === "text"
+                      ? {
+                          contentKind: "text" as const,
+                          fileDiff: parsedFile.fileDiff,
+                        }
+                      : {
+                          contentKind: "binary" as const,
+                          oldBinary: parsedFile.oldBinary,
+                          newBinary: parsedFile.newBinary,
+                        })}
+                  />
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
