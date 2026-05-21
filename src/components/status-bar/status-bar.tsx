@@ -51,7 +51,7 @@ import { cn } from "@/lib/utils";
 interface StatusBarProps {
   workdir: string;
   branch: string | null;
-  onOpenRepo: (path: string) => Promise<void>;
+  onOpenRepo: (path: string) => Promise<string>;
   onBranchSwitched: () => void | Promise<void>;
 }
 
@@ -101,10 +101,10 @@ function ProjectSegment({
   onOpenRepo,
 }: {
   workdir: string;
-  onOpenRepo: (path: string) => Promise<void>;
+  onOpenRepo: (path: string) => Promise<string>;
 }) {
   const [open, setOpen] = useState(false);
-  const { recent, addRecent } = useRecentRepos();
+  const { recent } = useRecentRepos();
   const recentPaths = useMemo(() => recent.map((r) => r.path), [recent]);
   const branchByPath = useRecentBranches(recentPaths);
   const others = useMemo(
@@ -116,7 +116,6 @@ function ProjectSegment({
     setOpen(false);
     try {
       await onOpenRepo(path);
-      addRecent(path);
     } catch (e) {
       toast.error(`Failed to open: ${e}`);
     }
@@ -128,7 +127,6 @@ function ProjectSegment({
       const selected = await openDialog({ directory: true, multiple: false });
       if (typeof selected !== "string") return;
       await onOpenRepo(selected);
-      addRecent(selected);
     } catch (e) {
       toast.error(`Open failed: ${e}`);
     }

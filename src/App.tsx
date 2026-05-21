@@ -16,6 +16,7 @@ import {
 } from "@/hooks/use-repo-status";
 import { useDiffs } from "@/hooks/use-diffs";
 import { useComments } from "@/hooks/use-comments";
+import { useRecentRepos } from "@/hooks/use-recent-repos";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -47,6 +48,7 @@ interface CommentStatusPayload {
 
 function App() {
   const { workdir, status, error, refresh, open, close } = useRepoStatus();
+  const { addRecent } = useRecentRepos();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
@@ -387,8 +389,16 @@ function App() {
   }, [refresh, workdir]);
 
   // Honor `cub [path]` first; otherwise restore the last successfully opened repo.
-  const openRef = useRef(open);
-  openRef.current = open;
+  const openAndRecord = useCallback(
+    async (path: string) => {
+      const dir = await open(path);
+      addRecent(dir);
+      return dir;
+    },
+    [open, addRecent],
+  );
+  const openRef = useRef(openAndRecord);
+  openRef.current = openAndRecord;
   useEffect(() => {
     let cancelled = false;
     getLaunchPath()
@@ -415,7 +425,7 @@ function App() {
   if (!workdir) {
     return (
       <>
-        <Onboarding onOpened={open} />
+        <Onboarding onOpened={openAndRecord} />
         <Toaster />
       </>
     );
@@ -491,7 +501,7 @@ function App() {
         <StatusBar
           workdir={workdir}
           branch={branch}
-          onOpenRepo={open}
+          onOpenRepo={openAndRecord}
           onBranchSwitched={handleBranchSwitched}
         />
       </div>

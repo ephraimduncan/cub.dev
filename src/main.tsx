@@ -13,6 +13,7 @@ import App from "./App";
 import "./App.css";
 import { perfLog } from "@/lib/perf";
 import { DiffSettingsProvider } from "@/hooks/use-diff-settings";
+import { RecentReposProvider } from "@/hooks/use-recent-repos";
 
 const diffWorkerPoolSize = Math.min(
   Math.max(1, (navigator.hardwareConcurrency ?? 2) - 1),
@@ -86,7 +87,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     >
       <ThemeProvider attribute="class" defaultTheme="system">
         <DiffSettingsProvider>
-          <App />
+          <RecentReposProvider>
+            <App />
+          </RecentReposProvider>
         </DiffSettingsProvider>
       </ThemeProvider>
     </WorkerPoolContextProvider>
