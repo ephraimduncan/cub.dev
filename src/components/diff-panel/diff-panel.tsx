@@ -417,28 +417,6 @@ export function DiffPanel({
     [bumpVersion],
   );
 
-  const renderHeaderPrefix = useCallback(
-    (item: Item) => (
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleCollapsed(item);
-        }}
-        className="grid size-5 place-items-center text-muted-foreground transition-colors hover:text-foreground"
-        aria-label={item.collapsed ? "Expand file" : "Collapse file"}
-      >
-        <IconChevronDown
-          className={cn(
-            "size-4 transition-transform",
-            item.collapsed && "-rotate-90",
-          )}
-        />
-      </button>
-    ),
-    [toggleCollapsed],
-  );
-
   const renderCustomHeader = useCallback(
     (item: Item) => {
       const meta = fileMetaByPath.get(item.id);
@@ -450,8 +428,15 @@ export function DiffPanel({
         <button
           type="button"
           onClick={() => toggleCollapsed(item)}
-          className="flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-muted/40"
+          className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
+          aria-label={item.collapsed ? "Expand file" : "Collapse file"}
         >
+          <IconChevronDown
+            className={cn(
+              "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+              item.collapsed && "-rotate-90",
+            )}
+          />
           <div className="min-w-0 flex-1">
             <p
               className={cn(
@@ -622,7 +607,6 @@ export function DiffPanel({
           options={options}
           className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
           style={codeViewStyle}
-          renderHeaderPrefix={renderHeaderPrefix}
           renderCustomHeader={renderCustomHeader}
           renderAnnotation={renderAnnotation}
         />
