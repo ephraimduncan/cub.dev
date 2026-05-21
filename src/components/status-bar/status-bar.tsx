@@ -12,6 +12,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Popover,
   PopoverContent,
@@ -326,8 +327,8 @@ function SettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { theme, setTheme } = useTheme();
-  const { settings, setFont, setFontSize } = useDiffSettings();
-  const { font, fontSize } = settings;
+  const { settings, setFont, setFontSize, setWrap } = useDiffSettings();
+  const { font, fontSize, wrap } = settings;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -403,6 +404,22 @@ function SettingsDialog({
               >
                 <IconPlus />
               </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              Line wrapping
+            </span>
+            <div className="flex h-8 items-center gap-2">
+              <Switch
+                checked={wrap}
+                onCheckedChange={setWrap}
+                size="sm"
+                aria-label="Wrap long lines"
+              />
+              <span className="text-sm text-muted-foreground">
+                {wrap ? "Wrap long lines" : "Scroll horizontally"}
+              </span>
             </div>
           </div>
         </div>

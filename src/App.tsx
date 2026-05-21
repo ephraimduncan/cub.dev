@@ -45,14 +45,12 @@ interface CommentStatusPayload {
   dismiss_reason: string | null;
 }
 
-const AUTO_EXPAND_FILE_LIMIT = 100;
-
 function App() {
   const { workdir, status, error, refresh, open, close } = useRepoStatus();
   const { diffs, loading } = useDiffs(status?.staged, status?.unstaged);
   const comments = useComments();
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("split");
-  const [allExpanded, setAllExpanded] = useState(false);
+  const [allExpanded, setAllExpanded] = useState(true);
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
   const [scrollNonce, setScrollNonce] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -242,25 +240,6 @@ function App() {
     }
     return files;
   }, [status]);
-
-  const autoExpandedRepoRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!workdir) {
-      autoExpandedRepoRef.current = null;
-      return;
-    }
-    if (!status) return;
-    if (autoExpandedRepoRef.current === workdir) return;
-    autoExpandedRepoRef.current = workdir;
-    const totalFiles = allFiles.length;
-    const shouldExpand = totalFiles <= AUTO_EXPAND_FILE_LIMIT;
-    perfLog("App", "allExpanded:auto", {
-      totalFiles,
-      shouldExpand,
-      limit: AUTO_EXPAND_FILE_LIMIT,
-    });
-    setAllExpanded(shouldExpand);
-  }, [allFiles.length, status, workdir]);
 
   const handleToggleExpandAll = useCallback(() => {
     setAllExpanded((v) => !v);

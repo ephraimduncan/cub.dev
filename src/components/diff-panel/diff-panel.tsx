@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
+import {
+  CodeView,
+  type CodeViewHandle,
+  useWorkerPool,
+} from "@pierre/diffs/react";
 import {
   DEFAULT_THEMES,
   parseDiffFromFile,
@@ -99,6 +103,33 @@ function getBinaryDiffMessage(
   return "Binary file changed. Text diff unavailable.";
 }
 
+// Gate CodeView mounting on workers having finished theme + language setup.
+// Without this, items briefly render unhighlighted and the parent background
+// shows through during fast scroll repaints (black flashes on dark theme).
+// Mirrors pierre's diffshub `useIsWorkerPoolReadyOrDisabled` pattern.
+function useIsWorkerPoolReady(): boolean {
+  const workerPool = useWorkerPool();
+  const [isReady, setIsReady] = useState(
+    () => workerPool?.isInitialized() ?? true,
+  );
+  const isReadyRef = useRef(isReady);
+  isReadyRef.current = isReady;
+  useEffect(() => {
+    if (workerPool == null) {
+      if (!isReadyRef.current) setIsReady(true);
+      return;
+    }
+    return workerPool.subscribeToStatChanges((stats) => {
+      const next = stats.managerState === "initialized";
+      if (next !== isReadyRef.current) {
+        isReadyRef.current = next;
+        setIsReady(next);
+      }
+    });
+  }, [workerPool]);
+  return isReady;
+}
+
 export function DiffPanel({
   files,
   diffs,
@@ -127,7 +158,8 @@ export function DiffPanel({
   const themeType: "light" | "dark" =
     resolvedTheme === "dark" ? "dark" : "light";
   const { settings } = useDiffSettings();
-  const { font, fontSize } = settings;
+  const { font, fontSize, wrap } = settings;
+  const workerPoolReady = useIsWorkerPoolReady();
 
   const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
 
@@ -528,11 +560,18 @@ export function DiffPanel({
       theme: DEFAULT_THEMES,
       themeType,
       diffStyle,
-      overflow: "wrap",
+      // `scroll` is the safe default. `wrap` mode runs an O(N) per-line
+      // getBoundingClientRect pass on every render (see
+      // VirtualizedFileDiff.js reconcileHeights), which collapses paint
+      // timing on files with ultra-long lines (minified bundles) and shows
+      // the parent background as a black flash during fast scroll. Users
+      // who want wrap (typical for prose / markdown) opt in via Settings.
+      overflow: wrap ? "wrap" : "scroll",
       lineDiffType: "word-alt",
       expansionLineCount: 5,
       hunkSeparators: "line-info",
       stickyHeaders: true,
+      layout: { paddingTop: 0, paddingBottom: 0, gap: 1 },
       enableLineSelection: !hasOpenForm,
       enableGutterUtility: !hasOpenForm,
       onLineSelectionEnd:
@@ -540,7 +579,7 @@ export function DiffPanel({
       onGutterUtilityClick:
         handleGutterClick as CodeViewOptions<CommentMetadata>["onGutterUtilityClick"],
     };
-  }, [addAnnotationForRange, diffStyle, hasOpenForm, themeType]);
+  }, [addAnnotationForRange, diffStyle, hasOpenForm, themeType, wrap]);
 
   if (loading) {
     return (
@@ -551,7 +590,7 @@ export function DiffPanel({
   }
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden overscroll-contain bg-background [contain:strict]">
       {initialItems.length > 0 && (
         <DiffToolbar
           diffStyle={diffStyle}
@@ -571,13 +610,17 @@ export function DiffPanel({
         <div className="flex h-full items-center justify-center">
           <p className="text-sm text-muted-foreground">No changes to review</p>
         </div>
+      ) : !workerPoolReady ? (
+        <div className="flex h-full items-center justify-center">
+          <p className="text-sm text-muted-foreground">Initializing…</p>
+        </div>
       ) : (
         <CodeView<CommentMetadata>
           key={viewerKey}
           ref={viewerRef}
           initialItems={initialItems}
           options={options}
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
+          className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
           style={codeViewStyle}
           renderHeaderPrefix={renderHeaderPrefix}
           renderCustomHeader={renderCustomHeader}
