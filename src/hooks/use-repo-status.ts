@@ -149,7 +149,12 @@ export function useRepoStatus(): UseRepoStatusReturn {
           () => openRepo(path),
           { path },
         );
-        const dir = rawDir.replace(/[\\/]+$/, "");
+        const trimmed = rawDir.replace(/[\\/]+$/, "");
+        // Preserve filesystem roots: "/" trims to "" and "C:\" trims to "C:" (a
+        // drive-relative path, not the drive root). Fall back to the raw value
+        // in those cases.
+        const dir =
+          trimmed === "" || /^[A-Za-z]:$/.test(trimmed) ? rawDir : trimmed;
         const raw = await perfTimedAsync(
           "useRepoStatus",
           "open:getRepoStatus",

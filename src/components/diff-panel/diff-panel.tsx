@@ -106,6 +106,9 @@ function getBinaryDiffMessage(
 // Gate CodeView mounting on workers having finished theme + language setup.
 // Without this, items briefly render unhighlighted and the parent background
 // shows through during fast scroll repaints (black flashes on dark theme).
+// `workersFailed` is treated as terminal: managerState stays at "waiting" when
+// initialization rejects, so without this branch the UI would be stuck on the
+// "Initializing…" placeholder forever. Render unhighlighted instead.
 // Mirrors pierre's diffshub `useIsWorkerPoolReadyOrDisabled` pattern.
 function useIsWorkerPoolReady(): boolean {
   const workerPool = useWorkerPool();
@@ -120,7 +123,8 @@ function useIsWorkerPoolReady(): boolean {
       return;
     }
     return workerPool.subscribeToStatChanges((stats) => {
-      const next = stats.managerState === "initialized";
+      const next =
+        stats.managerState === "initialized" || stats.workersFailed;
       if (next !== isReadyRef.current) {
         isReadyRef.current = next;
         setIsReady(next);
@@ -162,6 +166,13 @@ export function DiffPanel({
   const workerPoolReady = useIsWorkerPoolReady();
 
   const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
+
+  // Tracks the last scrollNonce we successfully delivered to the viewer.
+  // The scroll effect bails when the viewer is not yet mounted (workers still
+  // initializing, or mid-remount on a viewerKey change); recording the last
+  // consumed nonce lets the effect retry once those preconditions flip without
+  // replaying a stale scroll on later, unrelated dep changes.
+  const lastScrollNonceRef = useRef<number | null>(null);
 
   // Per-id version counter and last-seen prop snapshots used by the
   // imperative sync effects. Reset on viewerKey change (i.e. CodeView
@@ -381,10 +392,12 @@ export function DiffPanel({
   // ── Scroll to file ───────────────────────────────────────────────
   useEffect(() => {
     if (!scrollToPath) return;
+    if (lastScrollNonceRef.current === scrollNonce) return;
     const viewer = viewerRef.current;
     if (!viewer) return;
     const item = viewer.getItem(scrollToPath);
     if (!item) return;
+    lastScrollNonceRef.current = scrollNonce;
     if (item.collapsed) {
       viewer.updateItem({
         ...item,
@@ -398,9 +411,9 @@ export function DiffPanel({
       align: "start",
       behavior: "smooth",
     });
-    // scrollNonce intentionally in deps: re-fires when the same path is
-    // selected again from the sidebar.
-  }, [scrollToPath, scrollNonce, bumpVersion]);
+    // workerPoolReady + viewerKey re-fire the effect after CodeView mounts or
+    // remounts so a scroll request issued during initialization isn't lost.
+  }, [scrollToPath, scrollNonce, bumpVersion, workerPoolReady, viewerKey]);
 
   // ── Renderers ────────────────────────────────────────────────────
 
