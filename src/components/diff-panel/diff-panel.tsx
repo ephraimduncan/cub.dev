@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTheme } from "next-themes";
 import {
   CodeView,
@@ -51,51 +58,59 @@ interface DiffPanelProps {
   onToggleExpandAll: () => void;
   scrollToPath: string | null;
   scrollNonce: number;
-  annotationsByFile: Map<string, DiffLineAnnotation<CommentMetadata>[]>;
-  hasOpenForm: boolean;
-  totalCommentCount: number;
-  pendingCount: number;
-  acknowledgedCount: number;
-  resolvedCount: number;
-  onAddAnnotation: (
+  annotationsByFile?: Map<string, DiffLineAnnotation<CommentMetadata>[]>;
+  hasOpenForm?: boolean;
+  totalCommentCount?: number;
+  pendingCount?: number;
+  acknowledgedCount?: number;
+  resolvedCount?: number;
+  onAddAnnotation?: (
     filePath: string,
     side: AnnotationSide,
     lineStart: number,
     lineEnd: number,
   ) => void;
-  onCancelAnnotation: (
+  onCancelAnnotation?: (
     filePath: string,
     side: AnnotationSide,
     lineNumber: number,
   ) => void;
-  onSubmitAnnotation: (
+  onSubmitAnnotation?: (
     filePath: string,
     side: AnnotationSide,
     lineNumber: number,
     text: string,
     actionType: ActionType,
   ) => void;
-  onDeleteAnnotation: (
+  onDeleteAnnotation?: (
     filePath: string,
     side: AnnotationSide,
     lineNumber: number,
   ) => void;
-  onSubmitReview: () => void;
-  onClearResolved: () => void;
-  submittingReview: boolean;
+  onSubmitReview?: () => void;
+  onClearResolved?: () => void;
+  submittingReview?: boolean;
   branchInfo?: {
     baseRef: string;
     additions: number;
     deletions: number;
     onBack: () => void;
   };
+  commitStats?: { additions: number; deletions: number };
   workingChangesNotice?: {
     count: number;
     onBack: () => void;
   };
+  readOnly?: boolean;
+  commitDetailHeader?: ReactNode;
+  commitDetailMessage?: ReactNode;
 }
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
+const EMPTY_ANNOTATIONS_MAP: Map<
+  string,
+  DiffLineAnnotation<CommentMetadata>[]
+> = new Map();
 
 function getBinaryDiffMessage(
   kind: ChangeKind,
@@ -154,21 +169,25 @@ export function DiffPanel({
   onToggleExpandAll,
   scrollToPath,
   scrollNonce,
-  annotationsByFile,
-  hasOpenForm,
-  totalCommentCount,
-  pendingCount,
-  acknowledgedCount,
-  resolvedCount,
+  annotationsByFile = EMPTY_ANNOTATIONS_MAP,
+  hasOpenForm = false,
+  totalCommentCount = 0,
+  pendingCount = 0,
+  acknowledgedCount = 0,
+  resolvedCount = 0,
   onAddAnnotation,
   onCancelAnnotation,
   onSubmitAnnotation,
   onDeleteAnnotation,
   onSubmitReview,
   onClearResolved,
-  submittingReview,
+  submittingReview = false,
   branchInfo,
+  commitStats,
   workingChangesNotice,
+  readOnly = false,
+  commitDetailHeader,
+  commitDetailMessage,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const themeType: "light" | "dark" =
@@ -247,6 +266,19 @@ export function DiffPanel({
       if (!contents) continue;
       const annotations =
         annotationsByFile.get(file.path) ?? EMPTY_ANNOTATIONS;
+
+      if (contents.kind === "parsed") {
+        const diffItem: CodeViewDiffItem<CommentMetadata> = {
+          id: file.path,
+          type: "diff",
+          fileDiff: contents.fileDiff,
+          annotations,
+          collapsed,
+          version: 1,
+        };
+        items.push(diffItem);
+        continue;
+      }
 
       if (contents.kind === "binary") {
         binary += 1;
@@ -336,6 +368,16 @@ export function DiffPanel({
         };
         viewer.updateItem(updated);
       } else {
+        if (contents.kind === "parsed") {
+          if (item.type !== "diff") continue;
+          const updated: CodeViewDiffItem<CommentMetadata> = {
+            ...item,
+            fileDiff: contents.fileDiff,
+            version: bumpVersion(path),
+          };
+          viewer.updateItem(updated);
+          continue;
+        }
         if (item.type !== "diff") continue;
         let parsed = cache.get(contents);
         if (!parsed) {
@@ -357,6 +399,7 @@ export function DiffPanel({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
+    if (readOnly) return;
     const prev = lastAnnotationsRef.current;
     for (const [path, annotations] of annotationsByFile) {
       if (prev.get(path) === annotations) continue;
@@ -454,7 +497,6 @@ export function DiffPanel({
           type="button"
           onClick={() => toggleCollapsed(item)}
           className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
-          aria-label={item.collapsed ? "Expand file" : "Collapse file"}
         >
           <IconChevronDown
             className={cn(
@@ -497,6 +539,9 @@ export function DiffPanel({
         | DiffLineAnnotation<CommentMetadata>
         | { lineNumber: number; metadata?: CommentMetadata | undefined },
     ) => {
+      if (readOnly) return null;
+      if (!onSubmitAnnotation || !onCancelAnnotation || !onDeleteAnnotation)
+        return null;
       const meta = (annotation as DiffLineAnnotation<CommentMetadata>).metadata;
       if (!meta) return null;
       if (meta.status === "draft" && !meta.text) {
@@ -530,7 +575,7 @@ export function DiffPanel({
         />
       );
     },
-    [onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
+    [readOnly, onSubmitAnnotation, onCancelAnnotation, onDeleteAnnotation],
   );
 
   // ── CodeView style + options ─────────────────────────────────────
@@ -547,6 +592,7 @@ export function DiffPanel({
 
   const addAnnotationForRange = useCallback(
     (range: SelectedLineRange, id: string) => {
+      if (!onAddAnnotation) return;
       const target = getAnnotationTarget(range);
       onAddAnnotation(id, target.side, target.lineStart, target.lineEnd);
     },
@@ -582,14 +628,16 @@ export function DiffPanel({
       hunkSeparators: "line-info",
       stickyHeaders: true,
       layout: { paddingTop: 0, paddingBottom: 0, gap: 1 },
-      enableLineSelection: !hasOpenForm,
-      enableGutterUtility: !hasOpenForm,
-      onLineSelectionEnd:
-        handleSelectionEnd as CodeViewOptions<CommentMetadata>["onLineSelectionEnd"],
-      onGutterUtilityClick:
-        handleGutterClick as CodeViewOptions<CommentMetadata>["onGutterUtilityClick"],
+      enableLineSelection: !readOnly && !hasOpenForm,
+      enableGutterUtility: !readOnly && !hasOpenForm,
+      onLineSelectionEnd: readOnly
+        ? undefined
+        : (handleSelectionEnd as CodeViewOptions<CommentMetadata>["onLineSelectionEnd"]),
+      onGutterUtilityClick: readOnly
+        ? undefined
+        : (handleGutterClick as CodeViewOptions<CommentMetadata>["onGutterUtilityClick"]),
     };
-  }, [addAnnotationForRange, diffStyle, hasOpenForm, themeType, wrap]);
+  }, [addAnnotationForRange, diffStyle, hasOpenForm, readOnly, themeType, wrap]);
 
   if (loading) {
     return (
@@ -616,7 +664,7 @@ export function DiffPanel({
           </span>
         </button>
       )}
-      {(initialItems.length > 0 || branchInfo) && (
+      {(initialItems.length > 0 || branchInfo || commitDetailHeader) && (
         <DiffToolbar
           diffStyle={diffStyle}
           onDiffStyleChange={onDiffStyleChange}
@@ -630,31 +678,61 @@ export function DiffPanel({
           onClearResolved={onClearResolved}
           submittingReview={submittingReview}
           branchInfo={branchInfo}
+          commitStats={commitStats}
+          readOnly={readOnly}
         />
       )}
+      {commitDetailHeader ? (
+        <div className="shrink-0 border-b border-border bg-background">
+          {commitDetailHeader}
+        </div>
+      ) : null}
       {initialItems.length === 0 ? (
-        <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            {branchInfo
-              ? `No changes since ${branchInfo.baseRef}`
-              : "No changes to review"}
-          </p>
-        </div>
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              {branchInfo
+                ? `No changes since ${branchInfo.baseRef}`
+                : commitDetailHeader
+                  ? "No file changes in this commit"
+                  : "No changes to review"}
+            </p>
+          </div>
+        </>
       ) : !workerPoolReady ? (
-        <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-muted-foreground">Initializing…</p>
-        </div>
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">Initializing…</p>
+          </div>
+        </>
       ) : (
-        <CodeView<CommentMetadata>
-          key={viewerKey}
-          ref={viewerRef}
-          initialItems={initialItems}
-          options={options}
-          className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
-          style={codeViewStyle}
-          renderCustomHeader={renderCustomHeader}
-          renderAnnotation={renderAnnotation}
-        />
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <CodeView<CommentMetadata>
+            key={viewerKey}
+            ref={viewerRef}
+            initialItems={initialItems}
+            options={options}
+            className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
+            style={codeViewStyle}
+            renderCustomHeader={renderCustomHeader}
+            renderAnnotation={renderAnnotation}
+          />
+        </>
       )}
     </div>
   );

@@ -6,7 +6,7 @@ import {
   type WorkerInitializationRenderOptions,
   type WorkerPoolOptions,
 } from "@pierre/diffs/react";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider as NextThemeProvider, type ThemeProviderProps } from "next-themes";
 import { listen } from "@tauri-apps/api/event";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import App from "./App";
@@ -14,6 +14,13 @@ import "./App.css";
 import { perfLog } from "@/lib/perf";
 import { DiffSettingsProvider } from "@/hooks/use-diff-settings";
 import { RecentReposProvider } from "@/hooks/use-recent-repos";
+import { CommitDetailsCacheProvider } from "@/hooks/use-commit-details-cache";
+
+// next-themes ships d.ts that loses `children` under React 19's namespace
+// resolution; re-type the provider so JSX accepts children.
+const ThemeProvider = NextThemeProvider as React.FC<
+  React.PropsWithChildren<Omit<ThemeProviderProps, "children">>
+>;
 
 const diffWorkerPoolSize = Math.min(
   Math.max(1, (navigator.hardwareConcurrency ?? 2) - 1),
@@ -88,7 +95,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <ThemeProvider attribute="class" defaultTheme="system">
         <DiffSettingsProvider>
           <RecentReposProvider>
-            <App />
+            <CommitDetailsCacheProvider>
+              <App />
+            </CommitDetailsCacheProvider>
           </RecentReposProvider>
         </DiffSettingsProvider>
       </ThemeProvider>

@@ -16,19 +16,26 @@ interface BranchInfo {
   onBack: () => void;
 }
 
+interface CommitStats {
+  additions: number;
+  deletions: number;
+}
+
 interface DiffToolbarProps {
   diffStyle: "unified" | "split";
   onDiffStyleChange: (style: "unified" | "split") => void;
   allExpanded: boolean;
   onToggleExpandAll: () => void;
-  commentCount: number;
-  pendingCount: number;
-  acknowledgedCount: number;
-  resolvedCount: number;
-  onSubmitReview: () => void;
-  onClearResolved: () => void;
-  submittingReview: boolean;
+  commentCount?: number;
+  pendingCount?: number;
+  acknowledgedCount?: number;
+  resolvedCount?: number;
+  onSubmitReview?: () => void;
+  onClearResolved?: () => void;
+  submittingReview?: boolean;
   branchInfo?: BranchInfo;
+  commitStats?: CommitStats;
+  readOnly?: boolean;
 }
 
 function StatusSummary({
@@ -57,14 +64,16 @@ export function DiffToolbar({
   onDiffStyleChange,
   allExpanded,
   onToggleExpandAll,
-  commentCount,
-  pendingCount,
-  acknowledgedCount,
-  resolvedCount,
+  commentCount = 0,
+  pendingCount = 0,
+  acknowledgedCount = 0,
+  resolvedCount = 0,
   onSubmitReview,
   onClearResolved,
-  submittingReview,
+  submittingReview = false,
   branchInfo,
+  commitStats,
+  readOnly = false,
 }: DiffToolbarProps) {
   return (
     <div className="sticky top-0 z-10 flex h-10 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
@@ -74,7 +83,6 @@ export function DiffToolbar({
             variant="ghost"
             size="icon-sm"
             onClick={branchInfo.onBack}
-            aria-label="Back to changes"
             title="Back to changes"
           >
             <IconArrowLeft className="size-3.5" />
@@ -97,15 +105,15 @@ export function DiffToolbar({
             </div>
           )}
         </>
-      ) : (
+      ) : !readOnly ? (
         <StatusSummary
           pending={pendingCount}
           acknowledged={acknowledgedCount}
           resolved={resolvedCount}
         />
-      )}
+      ) : null}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        {resolvedCount > 0 && (
+        {!readOnly && resolvedCount > 0 && (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -116,6 +124,21 @@ export function DiffToolbar({
             <IconCheck className="size-3.5" />
           </Button>
         )}
+        {commitStats &&
+          (commitStats.additions > 0 || commitStats.deletions > 0) && (
+            <div className="flex shrink-0 items-center gap-1.5 px-1 text-xs tabular-nums">
+              {commitStats.additions > 0 && (
+                <span className={DIFF_ADDITION_COLOR}>
+                  +{commitStats.additions}
+                </span>
+              )}
+              {commitStats.deletions > 0 && (
+                <span className={DIFF_DELETION_COLOR}>
+                  −{commitStats.deletions}
+                </span>
+              )}
+            </div>
+          )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -142,18 +165,20 @@ export function DiffToolbar({
             <IconLayoutRows className="size-3.5" />
           )}
         </Button>
-        <Button
-          size="sm"
-          disabled={commentCount === 0 || submittingReview}
-          onClick={onSubmitReview}
-          className="tabular-nums"
-        >
-          {submittingReview
-            ? "Submitting…"
-            : commentCount > 0
-              ? `Submit (${commentCount})`
-              : "Submit Review"}
-        </Button>
+        {!readOnly && (
+          <Button
+            size="sm"
+            disabled={commentCount === 0 || submittingReview}
+            onClick={onSubmitReview}
+            className="tabular-nums"
+          >
+            {submittingReview
+              ? "Submitting…"
+              : commentCount > 0
+                ? `Submit (${commentCount})`
+                : "Submit Review"}
+          </Button>
+        )}
       </div>
     </div>
   );

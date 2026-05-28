@@ -51,7 +51,6 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
     <div className="flex h-40 flex-col border-t border-border">
       <Textarea
         ref={textareaRef}
-        aria-label="Commit message"
         placeholder="Enter commit message"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
@@ -69,7 +68,7 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
           editorOverflows ? "border-border" : "border-transparent",
         )}
       >
-        <ButtonGroup aria-label="Commit actions">
+        <ButtonGroup>
           <Button
             type="button"
             size="xs"
@@ -80,14 +79,13 @@ export function CommitBar({ stagedCount, onCommit }: CommitBarProps) {
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
-              aria-label="Open commit actions"
               disabled={commitDisabled}
               className={buttonVariants({
                 size: "icon-xs",
                 className: "px-2",
               })}
             >
-              <IconChevronDown aria-hidden="true" />
+              <IconChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top">
               <DropdownMenuItem
