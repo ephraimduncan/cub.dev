@@ -1,7 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 import { cn } from "@/lib/utils";
 
 type AvatarStatus = "ok" | "missing";
+
+// One URL per author shared across the whole app. Sidebar rows (14px) and the
+// commit-detail header (32px) used to request `&s=28` and `&s=64` respectively,
+// so clicking a commit triggered a fresh fetch+decode for the detail size even
+// when the sidebar row had already loaded the same author. Picking a single
+// size that's >= the largest place we render gives us one HTTP cache key per
+// author; 64px is exact-match for the 32px detail avatar on retina and looks
+// crisp downscaled into the 14px row.
+const AVATAR_PIXEL_SIZE = 64;
 
 const avatarCache: Map<string, AvatarStatus> = new Map();
 
@@ -39,8 +48,8 @@ function isBotEmail(email: string): boolean {
   return email.endsWith("[bot]@users.noreply.github.com");
 }
 
-function avatarUrl(email: string, sizePx: number): string {
-  return `https://avatars.githubusercontent.com/u/e?email=${encodeURIComponent(email)}&s=${sizePx}`;
+function avatarUrl(email: string): string {
+  return `https://avatars.githubusercontent.com/u/e?email=${encodeURIComponent(email)}&s=${AVATAR_PIXEL_SIZE}`;
 }
 
 export function CommitAvatar({
@@ -55,39 +64,36 @@ export function CommitAvatar({
   const bg = `hsl(${hue}, 60%, 40%)`;
   const initial = firstInitial(name);
 
-  const [status, setStatus] = useState<AvatarStatus | "loading">(() => {
-    if (skip) return "missing";
-    return avatarCache.get(normalized) ?? "loading";
-  });
+  // Derive status from the cache during render. Reading it here (instead of
+  // mirroring it into `useState`) means a parent prop change to a new email
+  // resolves to that email's status in the SAME render — we never paint an
+  // <img> whose URL the browser hasn't acked yet, and we never show the
+  // fallback for an author whose avatar is already cached. The reducer tick
+  // exists only to force a re-render when an async preload finishes.
+  const [, bump] = useReducer((t: number) => t + 1, 0);
+  const cached = skip ? ("missing" as const) : avatarCache.get(normalized);
+  const status: AvatarStatus | "loading" = cached ?? "loading";
 
   useEffect(() => {
-    if (skip) {
-      setStatus("missing");
-      return;
-    }
-    const cached = avatarCache.get(normalized);
-    if (cached) {
-      setStatus(cached);
-      return;
-    }
-    setStatus("loading");
+    if (skip) return;
+    if (avatarCache.has(normalized)) return;
     let cancelled = false;
     const img = new Image();
     img.onload = () => {
       avatarCache.set(normalized, "ok");
-      if (!cancelled) setStatus("ok");
+      if (!cancelled) bump();
     };
     img.onerror = () => {
       avatarCache.set(normalized, "missing");
-      if (!cancelled) setStatus("missing");
+      if (!cancelled) bump();
     };
-    img.src = avatarUrl(normalized, size * 2);
+    img.src = avatarUrl(normalized);
     return () => {
       cancelled = true;
       img.onload = null;
       img.onerror = null;
     };
-  }, [normalized, skip, size]);
+  }, [normalized, skip]);
 
   // Initial text scales with avatar size so the fallback letter stays
   // optically balanced from 14px chips up to 40px header avatars.
@@ -96,11 +102,18 @@ export function CommitAvatar({
   if (status === "ok") {
     return (
       <img
-        src={avatarUrl(normalized, size * 2)}
+        src={avatarUrl(normalized)}
         width={size}
         height={size}
         alt={name}
         title={name}
+        // `sync` tells WebKit to decode-from-cache before painting, killing
+        // the one-frame ghost where the previous author's pixels lingered
+        // while the new src decoded asynchronously. Safe here because we
+        // only render the <img> once preload has finished, so the bytes are
+        // already in the browser's HTTP cache.
+        decoding="sync"
+        fetchPriority="high"
         className={cn(
           "shrink-0 rounded-full outline-1 -outline-offset-1 outline-foreground/10",
           className,

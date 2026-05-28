@@ -99,28 +99,41 @@ pub fn run() {
         if let tauri::RunEvent::Exit = event {
             let state: &AppState = app_handle.state::<AppState>().inner();
 
-            // Signal the SSE listener thread to stop
+            // 1. Signal the SSE listener thread to stop reconnecting.
             state.event_listener_stop.store(true, Ordering::Relaxed);
-            if let Ok(mut guard) = state.event_listener.lock() {
-                if let Some(handle) = guard.take() {
-                    // Give the thread a moment to notice the stop flag
-                    let _ = handle.join();
-                }
-            }
 
-            // Kill the bridge server process
+            // 2. Kill the sidecar bridge BEFORE touching the listener. The
+            //    listener thread is blocked inside `BufReader::lines()` doing
+            //    a synchronous socket read; the stop flag alone can't wake it.
+            //    Killing the bridge closes the SSE peer, the read returns,
+            //    and the loop falls through to the stop-flag check.
+            //    Without this ordering the listener stays parked forever and
+            //    the exit handler hangs on `join()` — the prod app would
+            //    freeze on Cmd+Q and only force-quit could clear it.
             if let Ok(mut guard) = state.bridge.lock() {
-                if let Some(ref mut child) = *guard {
+                if let Some(mut child) = guard.take() {
                     let _ = child.kill();
+                    let _ = child.wait();
                 }
             }
 
-            // Drop the file watcher so the background thread exits.
+            // 3. Detach the listener handle. The thread will observe the
+            //    closed socket (or the stop flag on its next iteration) and
+            //    return on its own; the OS reaps it when the process exits.
+            //    We deliberately do not `join()` — a stuck SSE read here is
+            //    exactly the freeze we just fixed, and the thread holds no
+            //    resources we need to flush.
+            if let Ok(mut guard) = state.event_listener.lock() {
+                drop(guard.take());
+            }
+
+            // 4. Drop the file watcher so the notify background thread exits.
             if let Ok(mut guard) = state.watcher.lock() {
                 *guard = None;
             }
 
-            // Ensure the stop flag is set (redundant but defensive)
+            // Redundant but defensive: any other listener spinning on this
+            // shared flag will see it set.
             stop.store(true, Ordering::Relaxed);
         }
     });

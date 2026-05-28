@@ -1,7 +1,7 @@
 {
   "name": "cub",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "mcp:bundle": "bun build sidecar/cub-mcp.js --target=bun --outfile=sidecar/cub-mcp.bundled.js",
     "mcp:server": "bun sidecar/cub-mcp.js server",
     "mcp:mcp": "bun sidecar/cub-mcp.js mcp"

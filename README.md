@@ -111,7 +111,7 @@ Requires [Bun](https://bun.sh), the [Rust toolchain](https://rustup.rs), and the
 git clone https://github.com/ephraimduncan/cub.dev
 cd cub.dev
 bun install
-bun run tauri dev          # hot-reloading dev build
+bun run tauri:dev          # hot-reloading dev build (uses dev icon + "(dev)" title)
 bun run tauri build        # production binary in src-tauri/target/release/bundle
 ```
 
