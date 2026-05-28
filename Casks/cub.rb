@@ -1,16 +1,9 @@
 cask "cub" do
   version "0.6.0"
 
-  on_arm do
-    sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "5114ac1ccd2a6a8213877b99054c63cd2c46a55c8af6c99c05297898529c2c80"
 
-    url "https://github.com/ephraimduncan/cub.dev/releases/download/v#{version}/Cub_#{version}_aarch64.dmg"
-  end
-  on_intel do
-    sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-
-    url "https://github.com/ephraimduncan/cub.dev/releases/download/v#{version}/Cub_#{version}_x64.dmg"
-  end
+  url "https://github.com/ephraimduncan/cub.dev/releases/download/v#{version}/Cub_#{version}_aarch64.dmg"
 
   name "Cub"
   desc "Simple git client with AI code review built in"
@@ -25,7 +18,7 @@ cask "cub" do
   # the postflight below, macOS Gatekeeper blocks first launch from the
   # cask download.
   auto_updates false
-  depends_on macos: :big_sur
+  depends_on macos: :big_sur, arch: :arm64
 
   app "Cub.app"
   binary "#{appdir}/Cub.app/Contents/MacOS/cub"

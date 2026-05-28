@@ -37,9 +37,8 @@ brew install --cask ephraimduncan/cub/cub
    git tag v0.3.0
    git push origin v0.3.0
    ```
-6. The `release` workflow fans out across three runners:
-   - `macos-14` → `Cub_<v>_aarch64.dmg`
-   - `macos-13` → `Cub_<v>_x64.dmg`
+6. The `release` workflow fans out across two runners:
+   - `macos-14` → `Cub_<v>_aarch64.dmg` (Apple Silicon only — Intel macOS is not built)
    - `ubuntu-22.04` → `Cub_<v>_amd64.deb`, `Cub_<v>_amd64.AppImage`, `Cub-<v>-1.x86_64.rpm`
 
    Each job uploads to a single **draft** GitHub release and prints the SHA256 of every artifact as a workflow `::notice` (and stages them as `files.txt` in the job's working directory).
@@ -47,14 +46,8 @@ brew install --cask ephraimduncan/cub/cub
 8. **Update the cask** in `ephraimduncan/homebrew-cub`:
    ```ruby
    version "0.3.0"
-   on_arm do
-     sha256 "<aarch64 dmg sha>"
-     ...
-   end
-   on_intel do
-     sha256 "<x64 dmg sha>"
-     ...
-   end
+   sha256 "<aarch64 dmg sha>"
+   url "...Cub_#{version}_aarch64.dmg"
    ```
    Commit & push.
 
@@ -69,9 +62,6 @@ The workflow accepts a `workflow_dispatch` input. Run it from the Actions tab wi
 CI=true bun run tauri build --target aarch64-apple-darwin --bundles dmg,app
 # → src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Cub_<v>_aarch64.dmg
 
-# Intel cross-compile from arm64 host (needs the x86_64 rust target installed)
-rustup target add x86_64-apple-darwin
-CI=true bun run tauri build --target x86_64-apple-darwin --bundles dmg,app
 
 # Linux (requires the libwebkit2gtk/libgtk/libsoup/etc. dev packages — see
 # the workflow's "Install Linux build deps" step)

@@ -16,7 +16,7 @@ The thing it does that other clients don't: you can review your AI-generated cha
 
 ## Install
 
-**macOS** (Apple Silicon or Intel):
+**macOS** (Apple Silicon — Intel is not supported):
 
 ```bash
 brew install --cask ephraimduncan/cub/cub
