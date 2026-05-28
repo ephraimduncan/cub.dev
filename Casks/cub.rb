@@ -1,7 +1,7 @@
 cask "cub" do
   on_arm do
-    version "0.3.0"
-    sha256 "6f94efefc4bc34194625e3fd393617dad0d3f7a9dd6a82baabdfbb97d0b4877f"
+    version "0.5.0"
+    sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
     url "https://github.com/ephraimduncan/cub.dev/releases/download/v#{version}/Cub_#{version}_aarch64.dmg"
   end
