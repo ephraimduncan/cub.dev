@@ -96,12 +96,14 @@ interface DiffPanelProps {
     deletions: number;
     onBack: () => void;
   };
+  commitStats?: { additions: number; deletions: number };
   workingChangesNotice?: {
     count: number;
     onBack: () => void;
   };
   readOnly?: boolean;
   commitDetailHeader?: ReactNode;
+  commitDetailMessage?: ReactNode;
 }
 
 const EMPTY_ANNOTATIONS: DiffLineAnnotation<CommentMetadata>[] = [];
@@ -181,9 +183,11 @@ export function DiffPanel({
   onClearResolved,
   submittingReview = false,
   branchInfo,
+  commitStats,
   workingChangesNotice,
   readOnly = false,
   commitDetailHeader,
+  commitDetailMessage,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const themeType: "light" | "dark" =
@@ -652,6 +656,7 @@ export function DiffPanel({
           onClearResolved={onClearResolved}
           submittingReview={submittingReview}
           branchInfo={branchInfo}
+          commitStats={commitStats}
           readOnly={readOnly}
         />
       )}
@@ -661,30 +666,51 @@ export function DiffPanel({
         </div>
       ) : null}
       {initialItems.length === 0 ? (
-        <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            {branchInfo
-              ? `No changes since ${branchInfo.baseRef}`
-              : commitDetailHeader
-                ? "No file changes in this commit"
-                : "No changes to review"}
-          </p>
-        </div>
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              {branchInfo
+                ? `No changes since ${branchInfo.baseRef}`
+                : commitDetailHeader
+                  ? "No file changes in this commit"
+                  : "No changes to review"}
+            </p>
+          </div>
+        </>
       ) : !workerPoolReady ? (
-        <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-muted-foreground">Initializing…</p>
-        </div>
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">Initializing…</p>
+          </div>
+        </>
       ) : (
-        <CodeView<CommentMetadata>
-          key={viewerKey}
-          ref={viewerRef}
-          initialItems={initialItems}
-          options={options}
-          className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
-          style={codeViewStyle}
-          renderCustomHeader={renderCustomHeader}
-          renderAnnotation={renderAnnotation}
-        />
+        <>
+          {commitDetailMessage ? (
+            <div className="shrink-0 border-b border-border bg-background">
+              {commitDetailMessage}
+            </div>
+          ) : null}
+          <CodeView<CommentMetadata>
+            key={viewerKey}
+            ref={viewerRef}
+            initialItems={initialItems}
+            options={options}
+            className="relative min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [contain:strict] [overflow-anchor:none] [will-change:scroll-position] [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--color-border),0_1px_0_var(--color-border)]"
+            style={codeViewStyle}
+            renderCustomHeader={renderCustomHeader}
+            renderAnnotation={renderAnnotation}
+          />
+        </>
       )}
     </div>
   );

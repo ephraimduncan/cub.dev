@@ -20,7 +20,10 @@ import { useComments } from "@/hooks/use-comments";
 import { useRecentRepos } from "@/hooks/use-recent-repos";
 import { useCommitDiff } from "@/hooks/use-commit-diff";
 import { useCommitDetailsCache } from "@/hooks/use-commit-details-cache";
-import { CommitDetailHeader } from "@/components/commit-detail/commit-detail-header";
+import {
+  CommitDetailHeader,
+  CommitDetailMessage,
+} from "@/components/commit-detail/commit-detail-header";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -292,6 +295,17 @@ function App() {
     return { additions, deletions };
   }, [branchDiff.files]);
 
+  const commitTotals = useMemo(() => {
+    if (!historyActive) return { additions: 0, deletions: 0 };
+    let additions = 0;
+    let deletions = 0;
+    for (const f of commitDiff.files) {
+      additions += f.additions;
+      deletions += f.deletions;
+    }
+    return { additions, deletions };
+  }, [historyActive, commitDiff.files]);
+
   const handleToggleExpandAll = useCallback(() => {
     setAllExpanded((v) => !v);
   }, []);
@@ -536,12 +550,20 @@ function App() {
     branchDiffActive && workingChangesCount > 0
       ? { count: workingChangesCount, onBack: () => setBranchDiffActive(false) }
       : undefined;
+  const commitDetails = historyActive && selectedCommitOid
+    ? cache.get(selectedCommitOid)
+    : undefined;
   const commitDetailHeader =
     historyActive && selectedCommitOid ? (
       <CommitDetailHeader
-        details={cache.get(selectedCommitOid)}
+        details={commitDetails}
         oid={selectedCommitOid}
       />
+    ) : undefined;
+
+  const commitDetailMessage =
+    historyActive && selectedCommitOid ? (
+      <CommitDetailMessage details={commitDetails} />
     ) : undefined;
 
   return (
@@ -617,6 +639,8 @@ function App() {
             }
             readOnly={historyActive}
             commitDetailHeader={commitDetailHeader}
+            commitStats={historyActive ? commitTotals : undefined}
+            commitDetailMessage={commitDetailMessage}
             {...(historyActive
               ? {}
               : {

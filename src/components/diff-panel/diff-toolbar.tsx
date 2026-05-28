@@ -16,6 +16,11 @@ interface BranchInfo {
   onBack: () => void;
 }
 
+interface CommitStats {
+  additions: number;
+  deletions: number;
+}
+
 interface DiffToolbarProps {
   diffStyle: "unified" | "split";
   onDiffStyleChange: (style: "unified" | "split") => void;
@@ -29,6 +34,7 @@ interface DiffToolbarProps {
   onClearResolved?: () => void;
   submittingReview?: boolean;
   branchInfo?: BranchInfo;
+  commitStats?: CommitStats;
   readOnly?: boolean;
 }
 
@@ -66,6 +72,7 @@ export function DiffToolbar({
   onClearResolved,
   submittingReview = false,
   branchInfo,
+  commitStats,
   readOnly = false,
 }: DiffToolbarProps) {
   return (
@@ -118,6 +125,21 @@ export function DiffToolbar({
             <IconCheck className="size-3.5" />
           </Button>
         )}
+        {commitStats &&
+          (commitStats.additions > 0 || commitStats.deletions > 0) && (
+            <div className="flex shrink-0 items-center gap-1.5 px-1 text-xs tabular-nums">
+              {commitStats.additions > 0 && (
+                <span className={DIFF_ADDITION_COLOR}>
+                  +{commitStats.additions}
+                </span>
+              )}
+              {commitStats.deletions > 0 && (
+                <span className={DIFF_DELETION_COLOR}>
+                  −{commitStats.deletions}
+                </span>
+              )}
+            </div>
+          )}
         <Button
           variant="ghost"
           size="icon-sm"
