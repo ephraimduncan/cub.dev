@@ -161,7 +161,6 @@ function SidebarWorking({
           variant="ghost"
           size="icon-xs"
           onClick={onCloseRepo}
-          aria-label="Back to onboarding"
           title="Open a different repository"
         >
           <IconArrowLeft />
@@ -233,7 +232,6 @@ function SidebarBranch({
           variant="ghost"
           size="icon-xs"
           onClick={onCloseRepo}
-          aria-label="Back to onboarding"
           title="Open a different repository"
         >
           <IconArrowLeft />

@@ -497,7 +497,6 @@ export function DiffPanel({
           type="button"
           onClick={() => toggleCollapsed(item)}
           className="flex w-full cursor-pointer items-start gap-2.5 border-b border-border/50 bg-background px-4 py-2.5 text-left transition-colors hover:bg-muted/40"
-          aria-label={item.collapsed ? "Expand file" : "Collapse file"}
         >
           <IconChevronDown
             className={cn(

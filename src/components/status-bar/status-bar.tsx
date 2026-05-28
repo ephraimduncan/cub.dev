@@ -75,7 +75,6 @@ export function StatusBar({
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Settings"
           title="Settings"
           onClick={() => setSettingsOpen(true)}
         >
@@ -384,7 +383,6 @@ function SettingsDialog({
               <Button
                 variant="outline"
                 size="icon-sm"
-                aria-label="Decrease font size"
                 disabled={fontSize <= FONT_SIZE_MIN}
                 onClick={() => setFontSize(fontSize - 1)}
               >
@@ -396,7 +394,6 @@ function SettingsDialog({
               <Button
                 variant="outline"
                 size="icon-sm"
-                aria-label="Increase font size"
                 disabled={fontSize >= FONT_SIZE_MAX}
                 onClick={() => setFontSize(fontSize + 1)}
               >
@@ -413,7 +410,6 @@ function SettingsDialog({
                 checked={wrap}
                 onCheckedChange={setWrap}
                 size="sm"
-                aria-label="Wrap long lines"
               />
               <span className="text-sm text-muted-foreground">
                 {wrap ? "Wrap long lines" : "Scroll horizontally"}

@@ -157,7 +157,6 @@ export function SidebarHistory({
           variant="ghost"
           size="icon-xs"
           onClick={onCloseRepo}
-          aria-label="Back to onboarding"
           title="Open a different repository"
         >
           <IconArrowLeft />
@@ -186,8 +185,6 @@ export function SidebarHistory({
         <div
           ref={parentRef}
           tabIndex={0}
-          role="listbox"
-          aria-label="Commit history"
           onKeyDown={onKeyDown}
           className={`min-h-0 flex-1 overflow-y-auto outline-none ${SCROLLBAR_CLASS}`}
         >

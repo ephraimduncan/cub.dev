@@ -66,7 +66,6 @@ export function SidebarContextMenu({
         render={
           <button
             type="button"
-            aria-hidden="true"
             tabIndex={-1}
             style={getFloatingTriggerStyle(context.anchorRect)}
           />

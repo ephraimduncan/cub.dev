@@ -35,8 +35,6 @@ function CommitRowImpl({
   return (
     <button
       type="button"
-      role="option"
-      aria-selected={selected}
       onClick={() => onSelect(oid)}
       onPointerEnter={onPrefetch ? () => onPrefetch(oid) : undefined}
       onPointerLeave={onCancelPrefetch}
@@ -73,11 +71,11 @@ function CommitRowImpl({
         {authorName && (
           <>
             <span className="truncate">{authorName}</span>
-            <span className="opacity-60">·</span>
+            <span className="opacity-50">•</span>
           </>
         )}
         <span className="shrink-0">{relative}</span>
-        <span className="opacity-60">·</span>
+        <span className="opacity-50">•</span>
         <span className="shrink-0 font-mono">{shortSha}</span>
       </div>
     </button>

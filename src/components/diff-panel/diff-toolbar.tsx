@@ -83,7 +83,6 @@ export function DiffToolbar({
             variant="ghost"
             size="icon-sm"
             onClick={branchInfo.onBack}
-            aria-label="Back to changes"
             title="Back to changes"
           >
             <IconArrowLeft className="size-3.5" />

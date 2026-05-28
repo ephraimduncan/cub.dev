@@ -21,10 +21,7 @@ export function SidebarTabs({
   onPrefetchHistory,
 }: SidebarTabsProps) {
   return (
-    <div
-      role="tablist"
-      className="flex h-10 w-full items-center gap-1 border-b border-border bg-sidebar px-1.5"
-    >
+    <div className="flex h-10 w-full items-center gap-1 border-b border-border bg-sidebar px-1.5">
       {TABS.map((tab) => {
         const isActive = active === tab.id;
         const showDot =
@@ -35,9 +32,6 @@ export function SidebarTabs({
           <button
             key={tab.id}
             type="button"
-            role="tab"
-            aria-selected={isActive}
-            aria-label={tab.label}
             onPointerEnter={tab.id === "history" ? onPrefetchHistory : undefined}
             onFocus={tab.id === "history" ? onPrefetchHistory : undefined}
             onClick={() => onSelect(tab.id)}

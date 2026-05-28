@@ -1,6 +1,5 @@
 import { useCallback, useState, type JSX } from "react";
 import { IconCheck, IconCopy } from "@tabler/icons-react";
-import { Button } from "@/components/ui/button";
 import { CommitAvatar } from "@/components/sidebar/commit-avatar";
 import { cn } from "@/lib/utils";
 import type { CommitDetails } from "@/lib/tauri";
@@ -39,17 +38,15 @@ export function CommitDetailHeader(
 
   if (!hasDetails) {
     return (
-      <div className="flex items-start gap-3 px-4 py-3">
-        <div className="size-10 shrink-0 rounded-full bg-muted animate-pulse" />
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="size-8 shrink-0 rounded-full bg-muted animate-pulse" />
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
           <div className="h-3.5 w-32 rounded bg-muted animate-pulse" />
           <div className="h-3 w-48 rounded bg-muted animate-pulse" />
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <span className="font-mono text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
-            {shortSha}
-          </span>
-        </div>
+        <span className="font-mono text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
+          {shortSha}
+        </span>
       </div>
     );
   }
@@ -57,46 +54,38 @@ export function CommitDetailHeader(
   const dateString = DATE_FMT.format(new Date(details.author_timestamp * 1000));
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3">
+    <div className="flex items-center gap-3 px-4 py-3">
       <CommitAvatar
         email={details.author_email}
         name={details.author_name}
-        size={40}
+        size={32}
       />
       <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-        <p className="truncate text-sm font-semibold text-foreground">
+        <p className="truncate text-sm font-semibold text-foreground leading-tight">
           {details.author_name}
         </p>
-        <p className="truncate text-xs text-muted-foreground flex items-center gap-1.5">
-          <span>{dateString}</span>
+        <p className="truncate text-xs text-muted-foreground flex items-center gap-1.5 leading-tight">
+          <span className="shrink-0">{dateString}</span>
           <span className="opacity-50">•</span>
           <span className="truncate">{details.author_email}</span>
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          onClick={copy}
-          className={cn(
-            "font-mono text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground",
-            "hover:bg-muted/80 hover:text-foreground transition-colors",
-          )}
-        >
-          {shortSha}
-        </button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={copy}
-          aria-label="Copy commit SHA"
-        >
-          {copied ? (
-            <IconCheck className="size-3.5" />
-          ) : (
-            <IconCopy className="size-3.5" />
-          )}
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={copy}
+        className={cn(
+          "group flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-1",
+          "font-mono text-xs text-muted-foreground",
+          "transition-colors hover:bg-muted/80 hover:text-foreground",
+        )}
+      >
+        <span>{shortSha}</span>
+        {copied ? (
+          <IconCheck className="size-3 text-emerald-500" />
+        ) : (
+          <IconCopy className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
+        )}
+      </button>
     </div>
   );
 }

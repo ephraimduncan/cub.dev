@@ -100,10 +100,9 @@ export function CommitAvatar({
         width={size}
         height={size}
         alt={name}
-        aria-label={name}
         title={name}
         className={cn(
-          "shrink-0 rounded-full outline outline-1 -outline-offset-1 outline-foreground/10",
+          "shrink-0 rounded-full outline-1 -outline-offset-1 outline-foreground/10",
           className,
         )}
       />
@@ -112,11 +111,10 @@ export function CommitAvatar({
 
   return (
     <div
-      aria-label={name}
       title={name}
       style={{ width: size, height: size, background: bg, fontSize: initialFontSize }}
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full font-medium text-white outline outline-1 -outline-offset-1 outline-foreground/10",
+        "flex shrink-0 items-center justify-center rounded-full font-medium text-white outline-1 -outline-offset-1 outline-foreground/10",
         className,
       )}
     >
